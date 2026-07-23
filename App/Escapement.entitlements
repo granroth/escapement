@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Escapement is deliberately NOT sandboxed: it must exec /usr/bin/tmutil
+	  to start and stop backups, which the App Sandbox forbids. It ships with
+	  the Hardened Runtime and a Developer ID signature instead. This file
+	  carries only the Hardened Runtime exceptions the app actually needs;
+	  it claims no sandbox, no elevated privileges, and no Full Disk Access.
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<false/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<false/>
+</dict>
+</plist>

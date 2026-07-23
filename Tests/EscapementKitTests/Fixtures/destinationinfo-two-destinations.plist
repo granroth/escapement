@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Destinations</key>
+	<array>
+		<dict>
+			<key>Kind</key>
+			<string>Network</string>
+			<key>URL</key>
+			<string>smb://user@example._smb._tcp.local./Backups</string>
+			<key>Name</key>
+			<string>Backups</string>
+			<key>ID</key>
+			<string>B2FFC925-13A8-46C5-9469-153616C91FA9</string>
+			<key>LastDestination</key>
+			<integer>1</integer>
+		</dict>
+		<dict>
+			<key>ID</key>
+			<string>BC2DCD93-1902-44DD-838B-814AAD1116CF</string>
+			<key>Name</key>
+			<string>Time Machine 5TB</string>
+			<key>Kind</key>
+			<string>Local</string>
+		</dict>
+	</array>
+</dict>
+</plist>

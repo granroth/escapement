@@ -1,0 +1,6 @@
+Backup session status:
+{
+    ClientID = "com.apple.backupd";
+    Percent = "-1";
+    Running = 0;
+}

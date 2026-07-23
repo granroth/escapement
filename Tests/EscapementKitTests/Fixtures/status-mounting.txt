@@ -1,0 +1,11 @@
+Backup session status:
+{
+    BackupPhase = MountingDiskImage;
+    ClientID = "com.apple.backupd";
+    DateOfStateChange = "2026-07-23 16:45:17 +0000";
+    DestinationID = "B2FFC925-13A8-46C5-9469-153616C91FA9";
+    DestinationMountPoint = "/Volumes/Backups of example";
+    Percent = "-1";
+    Running = 1;
+    attemptOptions = 18;
+}
