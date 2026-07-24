@@ -50,4 +50,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func refresh(_ sender: Any?) {
         controller.requestRefresh()
     }
+
+    @objc func enableBackground(_ sender: Any?) {
+        mainWindowController.enableAgent()
+    }
+
+    @objc func disableBackground(_ sender: Any?) {
+        mainWindowController.disableAgent()
+    }
+
+    // Show only the applicable enable/disable item, and gate the manual verbs.
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(enableBackground(_:)):
+            // Offer enable only when nothing is registered.
+            return controller.agentStatus == .notRegistered || controller.agentStatus == .notFound
+        case #selector(disableBackground(_:)):
+            // Offer disable for anything registered, including a registration
+            // still awaiting approval — otherwise there is no way to cancel it.
+            return controller.agentStatus == .enabled
+                || controller.agentStatus == .requiresApproval
+        case #selector(backUpNow(_:)):
+            return controller.isAgentEnabled && !controller.isBackupRunning
+        case #selector(stopBackup(_:)):
+            return controller.isAgentEnabled && controller.isBackupRunning
+        default:
+            return true
+        }
+    }
 }

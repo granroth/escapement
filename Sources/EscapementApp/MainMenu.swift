@@ -39,6 +39,13 @@ enum MainMenu {
             withTitle: "Stop Backup", action: #selector(AppDelegate.stopBackup(_:)),
             keyEquivalent: ".")
         scheduleMenu.addItem(.separator())
+        scheduleMenu.addItem(
+            withTitle: "Enable Background Backups",
+            action: #selector(AppDelegate.enableBackground(_:)), keyEquivalent: "")
+        scheduleMenu.addItem(
+            withTitle: "Disable Background Backups",
+            action: #selector(AppDelegate.disableBackground(_:)), keyEquivalent: "")
+        scheduleMenu.addItem(.separator())
         let refresh = scheduleMenu.addItem(
             withTitle: "Refresh", action: #selector(AppDelegate.refresh(_:)), keyEquivalent: "r")
         refresh.keyEquivalentModifierMask = .command

@@ -12,7 +12,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     private let listVC: DestinationListViewController
     private let inspectorVC: InspectorViewController
     private let splitVC = NSSplitViewController()
-    private let banner = ConflictBanner()
+    private let banner = StatusBanner()
 
     private var inspectorItem: NSSplitViewItem!
     private var backupItem: NSToolbarItem!
@@ -75,7 +75,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
 
         banner.translatesAutoresizingMaskIntoConstraints = false
         banner.isHidden = true
-        banner.onOpenSettings = { [weak controller] in controller?.openTimeMachineSettings() }
 
         let split = splitVC.view
         split.translatesAutoresizingMaskIntoConstraints = false
@@ -137,16 +136,75 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     private func updateBanner() {
-        // Only a *confirmed* conflict warrants the banner. The unknown case is
-        // handled once, by the first-run dialog, not by a standing warning.
+        // Highest-priority issue wins the single banner slot. Background backups
+        // being off means nothing runs at all, so it outranks a conflict, which
+        // outranks the merely-unknown case (handled once by the first-run
+        // dialog, not a standing warning).
+        switch controller.agentStatus {
+        case .enabled:
+            break  // fall through to the conflict check
+        case .requiresApproval:
+            banner.show(
+                level: .caution,
+                message:
+                    "Background backups need your approval. Turn Escapement on in Login Items to "
+                    + "let it run your schedules.",
+                buttonTitle: "Open Login Items"
+            ) { [weak controller] in controller?.openLoginItemsSettings() }
+            return
+        default:
+            // notRegistered, notFound, and any future status are treated as
+            // "off": safer to over-warn than to hide that nothing is running.
+            banner.show(
+                level: .warning,
+                message:
+                    "Background backups are off, so your schedules won’t run. Enable the "
+                    + "background helper to have Escapement back up on schedule.",
+                buttonTitle: "Enable Background Backups"
+            ) { [weak self] in self?.enableAgent() }
+            return
+        }
+
         if controller.automaticState == .automatic {
-            banner.message =
-                "macOS is running its own Time Machine schedule, which conflicts with Escapement. "
-                + "Set Time Machine to back up “Manually” to hand scheduling to Escapement."
-            banner.isHidden = false
+            banner.show(
+                level: .caution,
+                message:
+                    "macOS is running its own Time Machine schedule, which conflicts with "
+                    + "Escapement. Set Time Machine to back up “Manually” to hand scheduling over.",
+                buttonTitle: "Open Time Machine Settings…"
+            ) { [weak controller] in controller?.openTimeMachineSettings() }
         } else {
             banner.isHidden = true
         }
+    }
+
+    func enableAgent() {
+        do {
+            try controller.enableAgent()
+        } catch {
+            presentAgentError("Couldn’t enable background backups",
+                "\(error.localizedDescription)\n\nEscapement must be in your Applications folder "
+                    + "to run in the background.")
+        }
+    }
+
+    func disableAgent() {
+        Task {
+            do {
+                try await controller.disableAgent()
+            } catch {
+                presentAgentError(
+                    "Couldn’t disable background backups", error.localizedDescription)
+            }
+        }
+    }
+
+    private func presentAgentError(_ message: String, _ informative: String) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = informative
+        alert.addButton(withTitle: "OK")
+        if let window { alert.beginSheetModal(for: window) }
     }
 
     private func refreshToolbar() {
@@ -155,12 +213,18 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         if let selected, selected.isBusy {
             backupItem.label = "Stop"
             backupItem.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "Stop")
-            backupItem.isEnabled = !selected.statusText.hasPrefix("Stopping")
+            // Stopping is also the agent's job, so it too needs the agent
+            // enabled; otherwise a queued stop would fire against an unrelated
+            // backup later.
+            backupItem.isEnabled =
+                controller.isAgentEnabled && !selected.statusText.hasPrefix("Stopping")
         } else {
             backupItem.label = "Back Up Now"
             backupItem.image = NSImage(
                 systemSymbolName: "arrow.clockwise", accessibilityDescription: "Back Up Now")
-            backupItem.isEnabled = selected != nil && !controller.isBackupRunning
+            // A manual backup is run by the agent, so it needs the agent enabled.
+            backupItem.isEnabled =
+                selected != nil && !controller.isBackupRunning && controller.isAgentEnabled
         }
     }
 
@@ -224,7 +288,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
 
     /// Menu "Back Up Now": starts a backup for the selected destination if idle.
     func menuBackUpNow() {
-        guard let row = selectedRow, !row.isBusy, !controller.isBackupRunning else { return }
+        guard let row = selectedRow, !row.isBusy, !controller.isBackupRunning,
+            controller.isAgentEnabled
+        else { return }
         controller.backUpNow(destinationID: row.destination.id)
     }
 
@@ -302,37 +368,42 @@ extension MainWindowController: NSWindowDelegate {
     }
 }
 
-/// The conflict warning bar shown only when macOS's own scheduler is confirmed
-/// to be running.
+/// A status bar across the top of the window for the one most important thing
+/// the user should act on: background backups being off, awaiting approval, or
+/// a confirmed conflict with macOS's own scheduler.
 @MainActor
-final class ConflictBanner: NSView {
-    private let label = NSTextField(wrappingLabelWithString: "")
-    private let button = NSButton(title: "Open Time Machine Settings…", target: nil, action: nil)
-    var onOpenSettings: (() -> Void)?
+final class StatusBanner: NSView {
 
-    var message: String {
-        get { label.stringValue }
-        set { label.stringValue = newValue }
+    enum Level {
+        case warning  // something is preventing backups from running
+        case caution  // a conflict or approval is needed
+
+        var tint: NSColor { self == .warning ? .systemOrange : .systemRed }
+        var symbol: String {
+            self == .warning ? "exclamationmark.triangle.fill" : "exclamationmark.octagon.fill"
+        }
     }
+
+    private let icon = NSImageView()
+    private let label = NSTextField(wrappingLabelWithString: "")
+    private let button = NSButton(title: "", target: nil, action: nil)
+    private var action: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.systemRed.withAlphaComponent(0.15).cgColor
         build()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unused") }
 
     private func build() {
         label.font = .systemFont(ofSize: 12)
-        let icon = NSImageView()
-        icon.image = NSImage(
-            systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")
-        icon.contentTintColor = .systemRed
+        icon.setContentHuggingPriority(.required, for: .horizontal)
         button.bezelStyle = .rounded
         button.controlSize = .small
         button.target = self
-        button.action = #selector(open)
+        button.action = #selector(didTapButton)
+        button.setContentHuggingPriority(.required, for: .horizontal)
 
         let stack = NSStackView(views: [icon, label, button])
         stack.alignment = .centerY
@@ -347,5 +418,16 @@ final class ConflictBanner: NSView {
             icon.widthAnchor.constraint(equalToConstant: 18),
         ])
     }
-    @objc private func open() { onOpenSettings?() }
+
+    func show(level: Level, message: String, buttonTitle: String, action: @escaping () -> Void) {
+        self.action = action
+        label.stringValue = message
+        button.title = buttonTitle
+        icon.image = NSImage(systemSymbolName: level.symbol, accessibilityDescription: nil)
+        icon.contentTintColor = level.tint
+        layer?.backgroundColor = level.tint.withAlphaComponent(0.15).cgColor
+        isHidden = false
+    }
+
+    @objc private func didTapButton() { action?() }
 }

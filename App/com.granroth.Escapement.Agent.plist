@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.granroth.Escapement.Agent</string>
+	<!-- Relative to the app bundle, so the agent works wherever the app lives. -->
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/EscapementAgent</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>com.granroth.Escapement</string>
+	</array>
+</dict>
+</plist>

@@ -21,15 +21,21 @@ BUILD_DIR="$ROOT/.build/$CONFIG"
 APP="$ROOT/.build/$APP_NAME.app"
 IDENTITY="Developer ID Application: KURT GRANROTH (9G779AB6US)"
 
-echo "Building $APP_NAME ($CONFIG)…"
+AGENT_NAME="EscapementAgent"
+AGENT_PLIST="com.granroth.Escapement.Agent.plist"
+
+echo "Building $APP_NAME and $AGENT_NAME ($CONFIG)…"
 swift build -c "$CONFIG" --product "$APP_NAME"
+swift build -c "$CONFIG" --product "$AGENT_NAME"
 
 echo "Assembling bundle…"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Library/LaunchAgents"
 
 cp "$BUILD_DIR/$APP_NAME" "$APP/Contents/MacOS/$APP_NAME"
+cp "$BUILD_DIR/$AGENT_NAME" "$APP/Contents/MacOS/$AGENT_NAME"
 cp "$ROOT/App/Info.plist" "$APP/Contents/Info.plist"
+cp "$ROOT/App/$AGENT_PLIST" "$APP/Contents/Library/LaunchAgents/$AGENT_PLIST"
 
 # Bundle EscapementKit's resource bundle (fixtures are test-only, but the
 # resource-bundle machinery is copied so Bundle.module resolves if used).
@@ -41,6 +47,15 @@ fi
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 echo "Signing…"
+# Sign the nested agent executable first, then the app bundle around it. Both
+# get the Hardened Runtime; the agent is not sandboxed because it runs tmutil.
+codesign --force --options runtime \
+	--entitlements "$ROOT/App/Escapement.entitlements" \
+	--sign "$IDENTITY" \
+	--identifier "com.granroth.Escapement.Agent" \
+	--timestamp \
+	"$APP/Contents/MacOS/$AGENT_NAME"
+
 codesign --force --options runtime \
 	--entitlements "$ROOT/App/Escapement.entitlements" \
 	--sign "$IDENTITY" \

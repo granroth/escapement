@@ -1,40 +1,35 @@
 import AppKit
 import EscapementKit
+import ServiceManagement
 
 /// The app's live state and the loop that keeps it current.
 ///
-/// `@MainActor` because it feeds the UI directly. The heavy lifting lives in
-/// `EscapementKit`; this class refreshes state, drives the `SchedulerRunner`,
-/// and hands actions to it. The `tmutil` calls are `async` and run off the main
-/// actor, so the UI never blocks on a process.
+/// The GUI is a viewer and configurator: it edits the configuration, shows
+/// status, and asks the background agent to run manual backups. It never fires
+/// a scheduled backup and never writes history — the agent owns both. The
+/// `tmutil` reads it does (destinations, status) are read-only and run off the
+/// main actor, so the UI never blocks on a process.
 @MainActor
 final class AppController {
 
     private let control = TMUtilController()
     private let configurationStore = ConfigurationStore()
     private let historyStore = HistoryStore()
-    private let runner: SchedulerRunner
+    private let commandStore = CommandStore()
+    private let agent = AgentManager()
     let calendar = Calendar.current
     let locale = Locale.current
 
-    // Live state, read by the view controllers after each `onChange`.
+    // Live state, read by the view controllers after each change notification.
     private(set) var destinations: [Destination] = []
     private(set) var activity: BackupActivity = .idle
     private(set) var automaticState: AutomaticBackupState = .unknown
     private(set) var configuration = Configuration()
     private(set) var history: [BackupRun] = []
+    private(set) var agentStatus: SMAppService.Status = .notRegistered
 
     private var observers: [() -> Void] = []
     private var loop: Task<Void, Never>?
-
-    init() {
-        runner = SchedulerRunner(
-            control: control,
-            configuration: configurationStore,
-            history: historyStore,
-            scheduler: Scheduler(calendar: calendar),
-            now: { Date() })
-    }
 
     func start() {
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -43,15 +38,14 @@ final class AppController {
         loop = Task { await runLoop() }
     }
 
-    /// Registers a closure called on the main actor whenever live state
-    /// changes. Both the status and settings windows observe.
+    /// Registers a closure called on the main actor whenever live state changes.
     func addObserver(_ block: @escaping () -> Void) {
         observers.append(block)
     }
 
-    /// Forces an immediate refresh (menu Refresh, etc.).
+    /// Forces an immediate refresh (menu Refresh, after an edit, etc.).
     func requestRefresh() {
-        refreshSoon()
+        Task { await refreshState() }
     }
 
     private func notify() {
@@ -72,30 +66,34 @@ final class AppController {
         return true
     }
 
-    // MARK: - Actions
+    /// Whether the background agent is enabled and running.
+    var isAgentEnabled: Bool { agentStatus == .enabled }
+
+    // MARK: - Manual actions (routed to the agent)
 
     func backUpNow(destinationID: String) {
-        Task {
-            await runner.backUpNow(destinationID: destinationID)
-            await refreshState()
-        }
+        // Only post when the agent is there to run it. A command posted while
+        // the agent is off would sit in the file and fire whenever the agent is
+        // next enabled — possibly against an unrelated backup.
+        guard isAgentEnabled else { return }
+        try? commandStore.post(.backUpNow(destinationID: destinationID))
+        requestRefresh()
     }
 
     func stopBackup() {
-        Task {
-            try? await control.stopBackup()
-            await refreshState()
-        }
+        guard isAgentEnabled else { return }
+        try? commandStore.post(.stop)
+        requestRefresh()
     }
 
-    /// Persists a schedule edit and re-evaluates promptly.
+    // MARK: - Configuration
+
     func apply(_ schedule: DestinationSchedule) {
         var config = configuration
         config.upsert(schedule)
         try? configurationStore.save(config)
         configuration = config
         notify()
-        refreshSoon()
     }
 
     func removeSchedule(destinationID: String) {
@@ -104,12 +102,40 @@ final class AppController {
         try? configurationStore.save(config)
         configuration = config
         notify()
-        refreshSoon()
     }
 
-    /// The current schedule for a destination, for the editor to seed itself.
     func schedule(for destinationID: String) -> DestinationSchedule? {
         configuration.schedule(for: destinationID)
+    }
+
+    func history(for destinationID: String) -> [BackupRun] {
+        history.filter { $0.destinationID == destinationID }
+    }
+
+    // MARK: - Agent management
+
+    /// Enables background backups by registering the LaunchAgent. Returns the
+    /// resulting status (which may be `.requiresApproval`), or throws on
+    /// failure.
+    @discardableResult
+    func enableAgent() throws -> SMAppService.Status {
+        // Drop any command left over from before, so enabling the agent never
+        // replays a stale request.
+        commandStore.clear()
+        try agent.enable()
+        agentStatus = agent.status
+        notify()
+        return agentStatus
+    }
+
+    func disableAgent() async throws {
+        try await agent.disable()
+        commandStore.clear()
+        await refreshState()
+    }
+
+    func openLoginItemsSettings() {
+        agent.openLoginItemsSettings()
     }
 
     func openTimeMachineSettings() {
@@ -120,34 +146,20 @@ final class AppController {
         }
     }
 
-    func history(for destinationID: String) -> [BackupRun] {
-        history.filter { $0.destinationID == destinationID }
-    }
-
-    // MARK: - The loop
+    // MARK: - The display loop
 
     private func runLoop() async {
         while !Task.isCancelled {
             await refreshState()
-            await runner.evaluate()
-            await refreshState()
-
-            let interval: Duration
-            if isBackupRunning {
-                interval = .seconds(2)  // poll progress while active
-            } else {
-                // Sleep until the next scheduled fire, capped so a schedule
-                // change or a clock jump is picked up within a minute.
-                let next = await runner.nextWakeUp()
-                let seconds = next.map { max(1, min(60, $0.timeIntervalSinceNow)) } ?? 60
-                interval = .seconds(seconds)
-            }
+            // Poll faster while a backup is running so progress stays live;
+            // otherwise refresh gently to pick up the agent's history writes and
+            // any change in destinations.
+            let interval: Duration = isBackupRunning ? .seconds(2) : .seconds(5)
             try? await Task.sleep(for: interval)
         }
     }
 
-    /// Reads everything and publishes it. `tmutil` reads run off the main actor
-    /// (they are `nonisolated async`); the small file loads are synchronous.
+    /// Reads everything for display. No firing, no history writes.
     private func refreshState() async {
         let destinations = (try? await control.destinations()) ?? self.destinations
         let activity = (try? await control.activity()) ?? .idle
@@ -158,25 +170,11 @@ final class AppController {
         self.automaticState = automaticState
         self.configuration = (try? configurationStore.load()) ?? configuration
         self.history = (try? historyStore.load()) ?? history
+        self.agentStatus = agent.status
         notify()
     }
 
-    /// Kicks an immediate refresh + evaluation outside the loop's cadence,
-    /// used after an edit or on wake. Safe alongside the loop: the runner
-    /// serialises itself.
-    private func refreshSoon() {
-        Task {
-            await refreshState()
-            await runner.evaluate()
-            await refreshState()
-        }
-    }
-
     @objc private func didWake() {
-        // Give a network share a moment to remount before evaluating.
-        Task {
-            try? await Task.sleep(for: .seconds(10))
-            refreshSoon()
-        }
+        Task { await refreshState() }
     }
 }

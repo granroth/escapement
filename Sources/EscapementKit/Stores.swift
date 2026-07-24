@@ -20,6 +20,11 @@ public enum EscapementPaths {
     public static func historyURL(fileManager: FileManager = .default) -> URL {
         supportDirectory(fileManager: fileManager).appendingPathComponent("history.json")
     }
+
+    /// The pending manual command from the GUI to the agent.
+    public static func commandURL(fileManager: FileManager = .default) -> URL {
+        supportDirectory(fileManager: fileManager).appendingPathComponent("command.json")
+    }
 }
 
 /// Reads and writes the user's schedules.

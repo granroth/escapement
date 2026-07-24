@@ -109,9 +109,25 @@ public struct TMUtilController: TimeMachineControlling {
             drainedError.leave()
         }
 
+        // Bound the call: a `tmutil` that hangs (an unreachable network
+        // destination, a wedged backupd) would otherwise block indefinitely,
+        // and this runs on a cooperative-pool thread whose supply is limited.
+        // Terminate a process that overstays; the pipe then closes and the read
+        // below completes. tmutil's own operations are normally sub-second, so
+        // the ceiling only ever fires on a genuine hang.
+        let timeoutItem = DispatchWorkItem {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + Self.timeout, execute: timeoutItem)
+
         let data = stdout.fileHandleForReading.readDataToEndOfFile()
         drainedError.wait()
         process.waitUntilExit()
+        timeoutItem.cancel()
         return String(decoding: data, as: UTF8.self)
     }
+
+    /// Ceiling on any single `tmutil` invocation.
+    private static let timeout: TimeInterval = 30
 }
