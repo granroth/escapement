@@ -1,46 +1,58 @@
 import AppKit
 import EscapementKit
 
-/// The schedule editor for one destination: enable, frequency, times, and the
-/// weekday or day-of-month selection where the frequency needs it.
+/// Edits the recurrence part of a schedule (not the enabled flag, which the
+/// inspector owns). Assembles a `Recurrence` from native controls and reports
+/// changes so the inspector can track unsaved edits; validation is deferred to
+/// the kit's failable factories.
 @MainActor
 final class ScheduleEditorView: NSView {
 
-    /// Called with a valid recurrence and the enabled flag when Apply is
-    /// pressed.
-    var onApply: ((Recurrence, Bool) -> Void)?
-    var onRemove: (() -> Void)?
+    /// Called whenever any control changes, so the inspector can update its
+    /// dirty state and Apply/Cancel availability.
+    var onChange: (() -> Void)?
 
-    private let enableCheckbox = NSButton(checkboxWithTitle: "Back up on this schedule", target: nil, action: nil)
     private let frequencyPopUp = NSPopUpButton()
+
+    // Hourly
     private let everyHoursPopUp = NSPopUpButton()
     private let hourlyMinutePopUp = NSPopUpButton()
+    private let windowCheckbox = NSButton(
+        checkboxWithTitle: "Only during a time window", target: nil, action: nil)
+    private let windowStartPicker = NSDatePicker()
+    private let windowEndPicker = NSDatePicker()
+
+    // Daily
+    private let everyDaysField = NSTextField()
+    private let everyDaysStepper = NSStepper()
+
+    // Daily / weekly / monthly time
     private let timePicker = NSDatePicker()
+
     private let weekdayButtons: [NSButton]
     private let dayButtons: [NSButton]
-    private let applyButton = NSButton(title: "Apply", target: nil, action: nil)
-    private let removeButton = NSButton(title: "Remove Schedule", target: nil, action: nil)
     private let validationLabel = NSTextField(labelWithString: "")
 
     private let hourlyRow = NSStackView()
+    private let windowRow = NSStackView()
+    private let dailyRow = NSStackView()
     private let timeRow = NSStackView()
     private let weekdayRow = NSStackView()
     private let dayGrid: NSGridView
 
     private var calendar = Calendar.current
 
-    // Sunday-first, matching Weekday's raw values.
     private static let weekdayInitials = ["S", "M", "T", "W", "T", "F", "S"]
 
     override init(frame frameRect: NSRect) {
-        weekdayButtons = Self.weekdayInitials.map { title in
-            let b = NSButton(title: title, target: nil, action: nil)
+        weekdayButtons = Self.weekdayInitials.map {
+            let b = NSButton(title: $0, target: nil, action: nil)
             b.setButtonType(.pushOnPushOff)
             b.bezelStyle = .rounded
             return b
         }
-        dayButtons = (1...31).map { day in
-            let b = NSButton(title: "\(day)", target: nil, action: nil)
+        dayButtons = (1...31).map {
+            let b = NSButton(title: "\($0)", target: nil, action: nil)
             b.setButtonType(.pushOnPushOff)
             b.bezelStyle = .rounded
             return b
@@ -55,61 +67,71 @@ final class ScheduleEditorView: NSView {
     // MARK: - Build
 
     private func build() {
-        enableCheckbox.target = self
-        enableCheckbox.action = #selector(controlsChanged)
-
         frequencyPopUp.addItems(withTitles: ["Hourly", "Daily", "Weekly", "Monthly"])
         frequencyPopUp.target = self
         frequencyPopUp.action = #selector(frequencyChanged)
 
         for hours in 1...12 { everyHoursPopUp.addItem(withTitle: "\(hours)") }
-        everyHoursPopUp.target = self
-        everyHoursPopUp.action = #selector(controlsChanged)
         for minute in stride(from: 0, to: 60, by: 5) {
             hourlyMinutePopUp.addItem(withTitle: String(format: ":%02d", minute))
         }
-        hourlyMinutePopUp.target = self
-        hourlyMinutePopUp.action = #selector(controlsChanged)
-
-        timePicker.datePickerStyle = .textFieldAndStepper
-        timePicker.datePickerElements = .hourMinute
-        timePicker.target = self
-        timePicker.action = #selector(controlsChanged)
-
-        for button in weekdayButtons + dayButtons {
-            button.target = self
-            button.action = #selector(controlsChanged)
+        windowCheckbox.target = self
+        windowCheckbox.action = #selector(windowToggled)
+        for picker in [windowStartPicker, windowEndPicker, timePicker] {
+            picker.datePickerStyle = .textFieldAndStepper
+            picker.datePickerElements = .hourMinute
+            picker.target = self
+            picker.action = #selector(controlChanged)
         }
 
-        applyButton.bezelStyle = .rounded
-        applyButton.keyEquivalent = "\r"
-        applyButton.target = self
-        applyButton.action = #selector(apply)
-        removeButton.bezelStyle = .rounded
-        removeButton.target = self
-        removeButton.action = #selector(remove)
+        everyDaysField.integerValue = 1
+        everyDaysField.alignment = .right
+        everyDaysField.formatter = integerFormatter()
+        everyDaysField.target = self
+        everyDaysField.action = #selector(everyDaysFieldChanged)
+        NSLayoutConstraint.activate([everyDaysField.widthAnchor.constraint(equalToConstant: 44)])
+        everyDaysStepper.minValue = 1
+        everyDaysStepper.maxValue = 366
+        everyDaysStepper.increment = 1
+        everyDaysStepper.integerValue = 1
+        everyDaysStepper.valueWraps = false
+        everyDaysStepper.target = self
+        everyDaysStepper.action = #selector(everyDaysStepperChanged)
+
+        for control in [everyHoursPopUp, hourlyMinutePopUp] {
+            control.target = self
+            control.action = #selector(controlChanged)
+        }
+        for button in weekdayButtons + dayButtons {
+            button.target = self
+            button.action = #selector(controlChanged)
+        }
+
         validationLabel.textColor = .systemRed
         validationLabel.font = .systemFont(ofSize: 11)
 
-        // Hourly row: "Every [N] hours at [:MM]"
-        hourlyRow.orientation = .horizontal
         hourlyRow.spacing = 6
-        hourlyRow.addArrangedSubview(NSTextField(labelWithString: "Every"))
-        hourlyRow.addArrangedSubview(everyHoursPopUp)
-        hourlyRow.addArrangedSubview(NSTextField(labelWithString: "hours at"))
-        hourlyRow.addArrangedSubview(hourlyMinutePopUp)
+        addArranged(hourlyRow, [label("Every"), everyHoursPopUp, label("hours at"), hourlyMinutePopUp])
 
-        // Time row: "At [time]"
-        timeRow.orientation = .horizontal
+        windowRow.orientation = .vertical
+        windowRow.alignment = .leading
+        windowRow.spacing = 6
+        let windowTimes = NSStackView(views: [
+            label("From"), windowStartPicker, label("to"), windowEndPicker,
+        ])
+        windowTimes.spacing = 6
+        windowRow.addArrangedSubview(windowCheckbox)
+        windowRow.addArrangedSubview(windowTimes)
+
+        dailyRow.spacing = 6
+        addArranged(dailyRow, [label("Every"), everyDaysField, everyDaysStepper, label("day(s)")])
+
         timeRow.spacing = 6
-        timeRow.addArrangedSubview(NSTextField(labelWithString: "At"))
-        timeRow.addArrangedSubview(timePicker)
+        addArranged(timeRow, [label("At"), timePicker])
 
-        weekdayRow.orientation = .horizontal
         weekdayRow.spacing = 4
         weekdayButtons.forEach { weekdayRow.addArrangedSubview($0) }
 
-        // Day-of-month grid, 7 columns.
         var gridRows: [[NSView]] = []
         var current: [NSView] = []
         for button in dayButtons {
@@ -122,19 +144,12 @@ final class ScheduleEditorView: NSView {
         }
         for row in gridRows { dayGrid.addRow(with: row) }
 
-        let frequencyRow = NSStackView(views: [
-            NSTextField(labelWithString: "Frequency:"), frequencyPopUp,
-        ])
-        frequencyRow.orientation = .horizontal
+        let frequencyRow = NSStackView(views: [label("Frequency:"), frequencyPopUp])
         frequencyRow.spacing = 6
 
-        let buttons = NSStackView(views: [removeButton, NSView(), applyButton])
-        buttons.orientation = .horizontal
-        buttons.distribution = .fill
-
         let stack = NSStackView(views: [
-            enableCheckbox, frequencyRow, hourlyRow, timeRow, weekdayRow, dayGrid,
-            validationLabel, buttons,
+            frequencyRow, hourlyRow, dailyRow, timeRow, windowRow, weekdayRow, dayGrid,
+            validationLabel,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -144,77 +159,95 @@ final class ScheduleEditorView: NSView {
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+    }
+
+    private func label(_ text: String) -> NSTextField { NSTextField(labelWithString: text) }
+    private func addArranged(_ stack: NSStackView, _ views: [NSView]) {
+        views.forEach { stack.addArrangedSubview($0) }
+    }
+    private func integerFormatter() -> NumberFormatter {
+        let f = NumberFormatter()
+        f.numberStyle = .none
+        f.minimum = 1
+        f.maximum = 366
+        f.allowsFloats = false
+        return f
     }
 
     // MARK: - Seeding
 
     func seed(from schedule: DestinationSchedule?, calendar: Calendar, locale: Locale) {
         self.calendar = calendar
-        timePicker.calendar = calendar
-        timePicker.locale = locale
-
-        guard let schedule else {
-            enableCheckbox.state = .off
-            frequencyPopUp.selectItem(at: 1)  // Daily
-            setTime(hour: 3, minute: 0)
-            everyHoursPopUp.selectItem(at: 3)  // 4 hours
-            hourlyMinutePopUp.selectItem(at: 0)
-            selectWeekdays([])
-            selectDays([])
-            updateVisibility()
-            updateValidation()
-            return
+        for picker in [windowStartPicker, windowEndPicker, timePicker] {
+            picker.calendar = calendar
+            picker.locale = locale
         }
 
-        enableCheckbox.state = schedule.isEnabled ? .on : .off
-        switch schedule.recurrence.kind {
-        case .hourly(let everyHours, let minute):
-            frequencyPopUp.selectItem(at: 0)
-            everyHoursPopUp.selectItem(at: everyHours - 1)
-            // The editor works in 5-minute steps. Round a stored minute to the
-            // nearest step rather than flooring it, so an off-grid value from a
-            // hand-edited config snaps to the closest choice instead of always
-            // rounding down.
-            let step = min((minute + 2) / 5, hourlyMinutePopUp.numberOfItems - 1)
-            hourlyMinutePopUp.selectItem(at: step)
-        case .daily:
-            frequencyPopUp.selectItem(at: 1)
-            seedTime(schedule.recurrence.times.first)
-        case .weekly(let weekdays):
-            frequencyPopUp.selectItem(at: 2)
-            seedTime(schedule.recurrence.times.first)
-            selectWeekdays(weekdays)
-        case .monthly(let days):
-            frequencyPopUp.selectItem(at: 3)
-            seedTime(schedule.recurrence.times.first)
-            selectDays(days)
+        // Defaults for a destination with no schedule yet.
+        frequencyPopUp.selectItem(at: 1)
+        everyHoursPopUp.selectItem(at: 3)
+        hourlyMinutePopUp.selectItem(at: 0)
+        windowCheckbox.state = .off
+        setPicker(windowStartPicker, hour: 0, minute: 0)
+        setPicker(windowEndPicker, hour: 23, minute: 0)
+        setEveryDays(1)
+        setPicker(timePicker, hour: 3, minute: 0)
+        selectWeekdays([])
+        selectDays([])
+
+        if let schedule {
+            switch schedule.recurrence.kind {
+            case .hourly(let everyHours, let minute, let window):
+                frequencyPopUp.selectItem(at: 0)
+                everyHoursPopUp.selectItem(at: everyHours - 1)
+                hourlyMinutePopUp.selectItem(
+                    at: min((minute + 2) / 5, hourlyMinutePopUp.numberOfItems - 1))
+                if let window {
+                    windowCheckbox.state = .on
+                    setPicker(windowStartPicker, hour: window.start.hour, minute: window.start.minute)
+                    setPicker(windowEndPicker, hour: window.end.hour, minute: window.end.minute)
+                }
+            case .daily(let everyDays):
+                frequencyPopUp.selectItem(at: 1)
+                setEveryDays(everyDays)
+                seedTime(schedule.recurrence.times.first)
+            case .weekly(let weekdays):
+                frequencyPopUp.selectItem(at: 2)
+                seedTime(schedule.recurrence.times.first)
+                selectWeekdays(weekdays)
+            case .monthly(let days):
+                frequencyPopUp.selectItem(at: 3)
+                seedTime(schedule.recurrence.times.first)
+                selectDays(days)
+            }
         }
+
         updateVisibility()
         updateValidation()
     }
 
     private func seedTime(_ time: TimeOfDay?) {
-        setTime(hour: time?.hour ?? 3, minute: time?.minute ?? 0)
+        setPicker(timePicker, hour: time?.hour ?? 3, minute: time?.minute ?? 0)
     }
-
-    private func setTime(hour: Int, minute: Int) {
+    private func setPicker(_ picker: NSDatePicker, hour: Int, minute: Int) {
         if let date = calendar.date(
             from: DateComponents(year: 2001, month: 1, day: 1, hour: hour, minute: minute))
         {
-            timePicker.dateValue = date
+            picker.dateValue = date
         }
     }
-
+    private func setEveryDays(_ value: Int) {
+        everyDaysField.integerValue = value
+        everyDaysStepper.integerValue = value
+    }
     private func selectWeekdays(_ weekdays: Set<Weekday>) {
         for (index, button) in weekdayButtons.enumerated() {
             button.state = weekdays.contains(Weekday(rawValue: index + 1)!) ? .on : .off
         }
     }
-
     private func selectDays(_ days: Set<Int>) {
         for (index, button) in dayButtons.enumerated() {
             button.state = days.contains(index + 1) ? .on : .off
@@ -223,32 +256,35 @@ final class ScheduleEditorView: NSView {
 
     // MARK: - Reading controls
 
-    private var selectedTime: TimeOfDay {
-        let components = calendar.dateComponents([.hour, .minute], from: timePicker.dateValue)
-        return TimeOfDay(hour: components.hour ?? 3, minute: components.minute ?? 0)!
+    private func time(from picker: NSDatePicker) -> TimeOfDay {
+        let c = calendar.dateComponents([.hour, .minute], from: picker.dateValue)
+        return TimeOfDay(hour: c.hour ?? 0, minute: c.minute ?? 0)!
     }
-
+    private var selectedTime: TimeOfDay { time(from: timePicker) }
     private var selectedWeekdays: Set<Weekday> {
         Set(
-            weekdayButtons.enumerated()
-                .filter { $0.element.state == .on }
+            weekdayButtons.enumerated().filter { $0.element.state == .on }
                 .compactMap { Weekday(rawValue: $0.offset + 1) })
     }
-
     private var selectedDays: Set<Int> {
-        Set(
-            dayButtons.enumerated()
-                .filter { $0.element.state == .on }
-                .map { $0.offset + 1 })
+        Set(dayButtons.enumerated().filter { $0.element.state == .on }.map { $0.offset + 1 })
     }
 
-    private func currentRecurrence() -> Recurrence? {
+    func currentRecurrence() -> Recurrence? {
         switch frequencyPopUp.indexOfSelectedItem {
         case 0:
             let minute = hourlyMinutePopUp.indexOfSelectedItem * 5
-            return .hourly(everyHours: everyHoursPopUp.indexOfSelectedItem + 1, minute: minute)
+            let window =
+                windowCheckbox.state == .on
+                ? TimeWindow(start: time(from: windowStartPicker), end: time(from: windowEndPicker))
+                : nil
+            // An inverted window makes TimeWindow(...) nil; treat that as
+            // "no valid recurrence" so validation flags it.
+            if windowCheckbox.state == .on && window == nil { return nil }
+            return .hourly(
+                everyHours: everyHoursPopUp.indexOfSelectedItem + 1, minute: minute, window: window)
         case 1:
-            return .daily(times: [selectedTime])
+            return .daily(everyDays: max(1, everyDaysField.integerValue), times: [selectedTime])
         case 2:
             return .weekly(weekdays: selectedWeekdays, times: [selectedTime])
         case 3:
@@ -258,27 +294,41 @@ final class ScheduleEditorView: NSView {
         }
     }
 
+    var isValid: Bool { currentRecurrence() != nil }
+
     // MARK: - Actions
 
     @objc private func frequencyChanged() {
         updateVisibility()
         updateValidation()
+        onChange?()
     }
-
-    @objc private func controlsChanged() {
+    @objc private func windowToggled() {
+        updateVisibility()
         updateValidation()
+        onChange?()
     }
-
-    @objc private func apply() {
-        guard let recurrence = currentRecurrence() else { return }
-        onApply?(recurrence, enableCheckbox.state == .on)
+    @objc private func controlChanged() {
+        updateValidation()
+        onChange?()
     }
-
-    @objc private func remove() { onRemove?() }
+    @objc private func everyDaysStepperChanged() {
+        everyDaysField.integerValue = everyDaysStepper.integerValue
+        controlChanged()
+    }
+    @objc private func everyDaysFieldChanged() {
+        let clamped = min(max(everyDaysField.integerValue, 1), 366)
+        everyDaysField.integerValue = clamped
+        everyDaysStepper.integerValue = clamped
+        controlChanged()
+    }
 
     private func updateVisibility() {
         let frequency = frequencyPopUp.indexOfSelectedItem
         hourlyRow.isHidden = frequency != 0
+        windowRow.isHidden = frequency != 0
+        windowRow.arrangedSubviews.last?.isHidden = windowCheckbox.state == .off
+        dailyRow.isHidden = frequency != 1
         timeRow.isHidden = frequency == 0
         weekdayRow.isHidden = frequency != 2
         dayGrid.isHidden = frequency != 3
@@ -286,14 +336,16 @@ final class ScheduleEditorView: NSView {
 
     private func updateValidation() {
         if currentRecurrence() == nil {
-            let frequency = frequencyPopUp.indexOfSelectedItem
-            validationLabel.stringValue =
-                frequency == 2
-                ? "Choose at least one weekday." : "Choose at least one day of the month."
-            applyButton.isEnabled = false
+            switch frequencyPopUp.indexOfSelectedItem {
+            case 0:
+                validationLabel.stringValue = "The window’s start must be at or before its end."
+            case 2:
+                validationLabel.stringValue = "Choose at least one weekday."
+            default:
+                validationLabel.stringValue = "Choose at least one day of the month."
+            }
         } else {
             validationLabel.stringValue = ""
-            applyButton.isEnabled = true
         }
     }
 }

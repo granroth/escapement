@@ -18,14 +18,21 @@ public struct RecurrenceFormatter: Sendable {
 
     public func summary(_ recurrence: Recurrence) -> String {
         switch recurrence.kind {
-        case .hourly(let everyHours, let minute):
+        case .hourly(let everyHours, let minute, let window):
             let every =
                 everyHours == 1 ? "Every hour" : "Every \(everyHours) hours"
             let padded = String(format: "%02d", minute)
-            return "\(every) at :\(padded)"
+            var summary = "\(every) at :\(padded)"
+            if let window {
+                summary += " from \(formatted(window.start)) to \(formatted(window.end))"
+            }
+            return summary
 
-        case .daily:
-            return "Daily at \(times(recurrence.times))"
+        case .daily(let everyDays):
+            if everyDays == 1 {
+                return "Daily at \(times(recurrence.times))"
+            }
+            return "Every \(everyDays) days at \(times(recurrence.times))"
 
         case .weekly(let weekdays):
             return "\(weekdayPhrase(weekdays)) at \(times(recurrence.times))"

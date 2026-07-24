@@ -108,7 +108,8 @@ struct RowBuilder {
 
     private func nextRunText(_ schedule: DestinationSchedule?, now: Date) -> String {
         guard let schedule, schedule.isEnabled,
-            let next = schedule.recurrence.nextFireDate(after: now, calendar: calendar)
+            let next = schedule.recurrence.nextFireDate(
+                after: now, calendar: calendar, anchor: schedule.effectiveFrom)
         else { return "—" }
         let formatter = DateFormatter()
         formatter.calendar = calendar

@@ -1,5 +1,23 @@
 import Foundation
 
+/// A window of the day, inclusive of both ends, used to restrict which hourly
+/// firing points run. Overnight windows (end before start) are out of scope,
+/// so construction requires `start <= end`.
+public struct TimeWindow: Hashable, Sendable, Codable {
+    public let start: TimeOfDay
+    public let end: TimeOfDay
+
+    public init?(start: TimeOfDay, end: TimeOfDay) {
+        guard start <= end else { return nil }
+        self.start = start
+        self.end = end
+    }
+
+    public func contains(_ time: TimeOfDay) -> Bool {
+        start <= time && time <= end
+    }
+}
+
 /// How often a destination should be backed up.
 ///
 /// Construction goes through the failable factories rather than the memberwise
@@ -7,10 +25,13 @@ import Foundation
 /// non-empty, sorted and unique; selections within range.
 public struct Recurrence: Codable, Hashable, Sendable {
 
-    public enum Kind: Codable, Hashable, Sendable {
-        /// Every `everyHours` hours at `minute` past, anchored to midnight.
-        case hourly(everyHours: Int, minute: Int)
-        case daily
+    public enum Kind: Hashable, Sendable {
+        /// Every `everyHours` hours at `minute` past, anchored to midnight,
+        /// optionally restricted to a window of the day (`nil` means all day).
+        case hourly(everyHours: Int, minute: Int, window: TimeWindow?)
+        /// Every `everyDays` days (1 = every day), counted from the schedule's
+        /// anchor. See `nextFireDate(after:calendar:anchor:)`.
+        case daily(everyDays: Int)
         case weekly(weekdays: Set<Weekday>)
         /// Days of the month, 1...31. A day that a month does not have is
         /// skipped rather than clamped.
@@ -30,14 +51,20 @@ public struct Recurrence: Codable, Hashable, Sendable {
 
     // MARK: - Construction
 
-    public static func hourly(everyHours: Int, minute: Int) -> Recurrence? {
+    public static func hourly(everyHours: Int, minute: Int, window: TimeWindow? = nil) -> Recurrence?
+    {
         guard (1...12).contains(everyHours), (0...59).contains(minute) else { return nil }
-        return Recurrence(kind: .hourly(everyHours: everyHours, minute: minute), times: [])
+        // Re-validate the window here too: a decoded `TimeWindow` bypasses its
+        // failable initialiser, so an inverted window can reach this factory
+        // and must be rejected rather than trusted.
+        if let window, window.start > window.end { return nil }
+        return Recurrence(
+            kind: .hourly(everyHours: everyHours, minute: minute, window: window), times: [])
     }
 
-    public static func daily(times: [TimeOfDay]) -> Recurrence? {
-        guard let times = normalised(times) else { return nil }
-        return Recurrence(kind: .daily, times: times)
+    public static func daily(everyDays: Int = 1, times: [TimeOfDay]) -> Recurrence? {
+        guard (1...366).contains(everyDays), let times = normalised(times) else { return nil }
+        return Recurrence(kind: .daily(everyDays: everyDays), times: times)
     }
 
     public static func weekly(weekdays: Set<Weekday>, times: [TimeOfDay]) -> Recurrence? {
@@ -61,14 +88,14 @@ public struct Recurrence: Codable, Hashable, Sendable {
     /// is subject to the same validation.
     private static func make(kind: Kind, times: [TimeOfDay]) -> Recurrence? {
         switch kind {
-        case .hourly(let everyHours, let minute):
+        case .hourly(let everyHours, let minute, let window):
             // An hourly recurrence derives its firing points from the interval,
             // so carrying times as well means the two disagree about when to
             // fire. Reject rather than silently pick one.
             guard times.isEmpty else { return nil }
-            return hourly(everyHours: everyHours, minute: minute)
-        case .daily:
-            return daily(times: times)
+            return hourly(everyHours: everyHours, minute: minute, window: window)
+        case .daily(let everyDays):
+            return daily(everyDays: everyDays, times: times)
         case .weekly(let weekdays):
             return weekly(weekdays: weekdays, times: times)
         case .monthly(let days):
@@ -98,6 +125,63 @@ public struct Recurrence: Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - Kind coding (backward-compatible)
+
+extension Recurrence.Kind: Codable {
+    private enum CaseKey: String, CodingKey { case hourly, daily, weekly, monthly }
+    private enum HourlyKey: String, CodingKey { case everyHours, minute, window }
+    private enum DailyKey: String, CodingKey { case everyDays }
+    private enum WeeklyKey: String, CodingKey { case weekdays }
+    private enum MonthlyKey: String, CodingKey { case days }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CaseKey.self)
+        // Written by hand so first-cut files decode: a missing `everyDays`
+        // means every day, and a missing `window` means all day.
+        if container.contains(.hourly) {
+            let hourly = try container.nestedContainer(keyedBy: HourlyKey.self, forKey: .hourly)
+            self = .hourly(
+                everyHours: try hourly.decode(Int.self, forKey: .everyHours),
+                minute: try hourly.decode(Int.self, forKey: .minute),
+                window: try hourly.decodeIfPresent(TimeWindow.self, forKey: .window))
+        } else if container.contains(.daily) {
+            let daily = try container.nestedContainer(keyedBy: DailyKey.self, forKey: .daily)
+            self = .daily(everyDays: try daily.decodeIfPresent(Int.self, forKey: .everyDays) ?? 1)
+        } else if container.contains(.weekly) {
+            let weekly = try container.nestedContainer(keyedBy: WeeklyKey.self, forKey: .weekly)
+            self = .weekly(weekdays: try weekly.decode(Set<Weekday>.self, forKey: .weekdays))
+        } else if container.contains(.monthly) {
+            let monthly = try container.nestedContainer(keyedBy: MonthlyKey.self, forKey: .monthly)
+            self = .monthly(days: try monthly.decode(Set<Int>.self, forKey: .days))
+        } else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "unknown recurrence kind"))
+        }
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CaseKey.self)
+        switch self {
+        case .hourly(let everyHours, let minute, let window):
+            var hourly = container.nestedContainer(keyedBy: HourlyKey.self, forKey: .hourly)
+            try hourly.encode(everyHours, forKey: .everyHours)
+            try hourly.encode(minute, forKey: .minute)
+            try hourly.encodeIfPresent(window, forKey: .window)
+        case .daily(let everyDays):
+            var daily = container.nestedContainer(keyedBy: DailyKey.self, forKey: .daily)
+            try daily.encode(everyDays, forKey: .everyDays)
+        case .weekly(let weekdays):
+            var weekly = container.nestedContainer(keyedBy: WeeklyKey.self, forKey: .weekly)
+            try weekly.encode(weekdays, forKey: .weekdays)
+        case .monthly(let days):
+            var monthly = container.nestedContainer(keyedBy: MonthlyKey.self, forKey: .monthly)
+            try monthly.encode(days, forKey: .days)
+        }
+    }
+}
+
 // MARK: - The next-fire engine
 
 extension Recurrence {
@@ -110,13 +194,23 @@ extension Recurrence {
 
     /// The next instant this recurrence fires, strictly after `reference`.
     ///
+    /// - Parameter anchor: the parity origin for `daily(everyDays:)`. Callers
+    ///   that own a schedule pass its `effectiveFrom`; the interval is counted
+    ///   in whole days from that day. Ignored by every other kind, so the
+    ///   default (a fixed reference date) is harmless for them and for
+    ///   `everyDays == 1`.
+    ///
     /// Returns `nil` only if nothing falls within the search window, which in
     /// practice means the recurrence cannot be satisfied at all.
-    public func nextFireDate(after reference: Date, calendar: Calendar) -> Date? {
+    public func nextFireDate(
+        after reference: Date, calendar: Calendar,
+        anchor: Date = Date(timeIntervalSinceReferenceDate: 0)
+    ) -> Date? {
         var day = calendar.startOfDay(for: reference)
 
         for _ in 0...Self.searchLimitDays {
-            for candidate in firingPoints(on: day, calendar: calendar) where candidate > reference {
+            for candidate in firingPoints(on: day, calendar: calendar, anchor: anchor)
+            where candidate > reference {
                 return candidate
             }
             guard let nextDay = calendar.date(byAdding: .day, value: 1, to: day) else { return nil }
@@ -131,23 +225,33 @@ extension Recurrence {
     /// Because the caller walks real days, a monthly schedule on the 31st
     /// simply never sees a 31st in February — the skip-don't-clamp rule falls
     /// out of the iteration rather than needing to be special-cased.
-    private func firingPoints(on day: Date, calendar: Calendar) -> [Date] {
+    private func firingPoints(on day: Date, calendar: Calendar, anchor: Date) -> [Date] {
         let components = calendar.dateComponents([.year, .month, .day, .weekday], from: day)
 
         switch kind {
-        case .hourly(let everyHours, let minute):
+        case .hourly(let everyHours, let minute, let window):
             // Validation already guarantees 1...12, but `stride(by:)` *traps*
             // on a zero step rather than returning an empty sequence. A
             // scheduling agent must not have a crash one invariant slip away,
             // so the guard stays as a second line of defence.
             guard everyHours > 0 else { return [] }
-            return stride(from: 0, to: 24, by: everyHours).compactMap {
-                instant(on: components, hour: $0, minute: minute, calendar: calendar)
+            return stride(from: 0, to: 24, by: everyHours).compactMap { hour -> Date? in
+                let time = TimeOfDay(hour: hour, minute: minute)!
+                guard window?.contains(time) ?? true else { return nil }
+                return instant(on: components, hour: hour, minute: minute, calendar: calendar)
             }
             .sorted()
 
-        case .daily:
-            break
+        case .daily(let everyDays):
+            // Every `everyDays` days counted in whole days from the anchor. The
+            // parity is consistent in both directions, so a schedule whose
+            // reference precedes its anchor still lands on the right days.
+            if everyDays > 1 {
+                let anchorDay = calendar.startOfDay(for: anchor)
+                guard let offset = calendar.dateComponents([.day], from: anchorDay, to: day).day,
+                    offset % everyDays == 0
+                else { return [] }
+            }
 
         case .weekly(let weekdays):
             guard let weekday = components.weekday.flatMap(Weekday.init(rawValue:)),

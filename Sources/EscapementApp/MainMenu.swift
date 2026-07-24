@@ -1,7 +1,9 @@
 import AppKit
 
 /// Builds the app's menu bar in code. Every user action has a menu path, not
-/// only a button — a baseline expectation of a Mac app.
+/// only a toolbar button. Menu items that make no sense for a single-window
+/// utility — Enter Full Screen, the window-tab commands — are intentionally
+/// absent, and the window disables the system features that would re-add them.
 enum MainMenu {
     @MainActor
     static func build() -> NSMenu {
@@ -13,13 +15,8 @@ enum MainMenu {
         let appMenu = NSMenu()
         appItem.submenu = appMenu
         appMenu.addItem(
-            withTitle: "About Escapement", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
-            keyEquivalent: "")
-        appMenu.addItem(.separator())
-        let settings = appMenu.addItem(
-            withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)),
-            keyEquivalent: ",")
-        settings.keyEquivalentModifierMask = .command
+            withTitle: "About Escapement",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Hide Escapement", action: #selector(NSApplication.hide(_:)),
@@ -29,14 +26,34 @@ enum MainMenu {
             withTitle: "Quit Escapement", action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")
 
-        // File-ish / View menu with Refresh
+        // Schedule menu — the app's own verbs.
+        let scheduleItem = NSMenuItem()
+        mainMenu.addItem(scheduleItem)
+        let scheduleMenu = NSMenu(title: "Schedule")
+        scheduleItem.submenu = scheduleMenu
+        let backup = scheduleMenu.addItem(
+            withTitle: "Back Up Now", action: #selector(AppDelegate.backUpNow(_:)),
+            keyEquivalent: "b")
+        backup.keyEquivalentModifierMask = .command
+        scheduleMenu.addItem(
+            withTitle: "Stop Backup", action: #selector(AppDelegate.stopBackup(_:)),
+            keyEquivalent: ".")
+        scheduleMenu.addItem(.separator())
+        let refresh = scheduleMenu.addItem(
+            withTitle: "Refresh", action: #selector(AppDelegate.refresh(_:)), keyEquivalent: "r")
+        refresh.keyEquivalentModifierMask = .command
+
+        // View menu — inspector toggle and the log.
         let viewItem = NSMenuItem()
         mainMenu.addItem(viewItem)
         let viewMenu = NSMenu(title: "View")
         viewItem.submenu = viewMenu
-        let refresh = viewMenu.addItem(
-            withTitle: "Refresh", action: #selector(AppDelegate.refresh(_:)), keyEquivalent: "r")
-        refresh.keyEquivalentModifierMask = .command
+        viewMenu.addItem(
+            withTitle: "Hide/Show Inspector",
+            action: #selector(MainWindowController.toggleInspector), keyEquivalent: "i")
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(
+            withTitle: "Activity Log", action: #selector(AppDelegate.showLog(_:)), keyEquivalent: "l")
 
         // Window menu
         let windowItem = NSMenuItem()
@@ -46,9 +63,6 @@ enum MainMenu {
         windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
             keyEquivalent: "m")
-        windowMenu.addItem(
-            withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(.separator())
         windowMenu.addItem(
             withTitle: "Escapement", action: #selector(AppDelegate.showMain(_:)),
             keyEquivalent: "0")

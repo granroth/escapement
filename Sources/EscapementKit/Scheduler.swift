@@ -60,7 +60,10 @@ public struct Scheduler: Sendable {
     ) -> Date? {
         schedules
             .filter(\.isEnabled)
-            .compactMap { $0.recurrence.nextFireDate(after: now, calendar: calendar) }
+            .compactMap {
+                $0.recurrence.nextFireDate(
+                    after: now, calendar: calendar, anchor: $0.effectiveFrom)
+            }
             .min()
     }
 
@@ -81,7 +84,9 @@ public struct Scheduler: Sendable {
     ) -> Date? {
         guard schedule.isEnabled else { return nil }
         let reference = lastRuns[schedule.destinationID] ?? schedule.effectiveFrom
-        guard let occurrence = schedule.recurrence.nextFireDate(after: reference, calendar: calendar)
+        guard
+            let occurrence = schedule.recurrence.nextFireDate(
+                after: reference, calendar: calendar, anchor: schedule.effectiveFrom)
         else { return nil }
         return occurrence <= now ? occurrence : nil
     }

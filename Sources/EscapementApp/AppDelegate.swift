@@ -4,42 +4,47 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let controller = AppController()
-    private var statusWindowController: StatusWindowController!
-    private var settingsWindowController: SettingsWindowController?
+    private var mainWindowController: MainWindowController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = MainMenu.build()
 
-        statusWindowController = StatusWindowController(controller: controller)
-        statusWindowController.showWindow(nil)
+        mainWindowController = MainWindowController(controller: controller)
+        mainWindowController.showWindow(nil)
 
         controller.start()
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // A backup scheduler should keep running with its window closed, so closing
-    // the last window does not quit the app.
+    // Escapement is a single-window app, and for now scheduling only runs while
+    // it is open, so closing the one window quits it rather than leaving an
+    // invisible process behind. (Revisit if a background agent is added that
+    // should outlive the window.)
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false
+        true
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        if !hasVisibleWindows { statusWindowController.showWindow(nil) }
+        if !hasVisibleWindows { mainWindowController.showWindow(nil) }
         return true
     }
 
     // MARK: - Menu actions
 
     @objc func showMain(_ sender: Any?) {
-        statusWindowController.showWindow(nil)
+        mainWindowController.showWindow(nil)
     }
 
-    @objc func showSettings(_ sender: Any?) {
-        if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController(controller: controller)
-        }
-        settingsWindowController?.showWindow(nil)
-        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+    @objc func showLog(_ sender: Any?) {
+        mainWindowController.showLog(sender)
+    }
+
+    @objc func backUpNow(_ sender: Any?) {
+        mainWindowController.menuBackUpNow()
+    }
+
+    @objc func stopBackup(_ sender: Any?) {
+        controller.stopBackup()
     }
 
     @objc func refresh(_ sender: Any?) {
