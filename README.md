@@ -58,13 +58,19 @@ and `docs/specs/` for feature-by-feature specifications.
 ## Building
 
 ```sh
-swift test                     # the EscapementKit test suite
-scripts/build-app.sh release   # build and sign Escapement.app
+swift test                       # the EscapementKit test suite
+scripts/build-app.sh release     # build and sign Escapement.app
+swift scripts/make-icons.swift   # rebuild the icons after changing the art
 ```
 
 The app builds from `swift build` plus a bundling script — there is no Xcode
 project to drift out of sync. Signing uses a Developer ID; adjust the identity
 in `scripts/build-app.sh` for your own.
+
+The icons are committed, so the icon step is only needed when the art in
+`App/Icon/` changes. Escapement ships two of them — a full-bleed bundle icon
+and the free-form mark it installs as its Dock tile at launch — for the reasons
+in `docs/specs/008-app-icon.md`.
 
 ## License
 

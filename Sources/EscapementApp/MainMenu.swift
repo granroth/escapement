@@ -16,7 +16,7 @@ enum MainMenu {
         appItem.submenu = appMenu
         appMenu.addItem(
             withTitle: "About Escapement",
-            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+            action: #selector(AppDelegate.showAbout(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Hide Escapement", action: #selector(NSApplication.hide(_:)),

@@ -37,6 +37,18 @@ cp "$BUILD_DIR/$AGENT_NAME" "$APP/Contents/MacOS/$AGENT_NAME"
 cp "$ROOT/App/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/App/$AGENT_PLIST" "$APP/Contents/Library/LaunchAgents/$AGENT_PLIST"
 
+# Two icons, both required — see scripts/make-icons.swift for why. Escapement
+# .icns is the bundle icon macOS clips to its own rounded-rect; the free-form
+# one is installed as the Dock tile at launch, where no clip applies. Missing
+# either is a build error rather than a silently plain-looking app.
+for icon in Escapement EscapementFreeform; do
+	if [ ! -f "$ROOT/App/Icon/$icon.icns" ]; then
+		echo "error: App/Icon/$icon.icns is missing — run: swift scripts/make-icons.swift" >&2
+		exit 1
+	fi
+	cp "$ROOT/App/Icon/$icon.icns" "$APP/Contents/Resources/$icon.icns"
+done
+
 # Bundle EscapementKit's resource bundle (fixtures are test-only, but the
 # resource-bundle machinery is copied so Bundle.module resolves if used).
 if compgen -G "$BUILD_DIR/"'*.bundle' > /dev/null; then

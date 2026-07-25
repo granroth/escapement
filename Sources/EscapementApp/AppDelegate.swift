@@ -31,6 +31,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Menu actions
 
+    // The standard About panel resolves the *bundle* icon, which is the
+    // full-bleed one drawn to survive the system's rounded-rect clip. The
+    // panel does no clipping of its own, so hand it the free-form mark and
+    // the wheel appears as drawn.
+    @objc func showAbout(_ sender: Any?) {
+        var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
+        if let icon = AppIcon.freeform { options[.applicationIcon] = icon }
+        NSApp.orderFrontStandardAboutPanel(options: options)
+    }
+
     @objc func showMain(_ sender: Any?) {
         mainWindowController.showWindow(nil)
     }
