@@ -9,3 +9,6 @@ xcuserdata/
 
 # local agent/editor state
 .claude/
+
+# Zola build output
+web/public/

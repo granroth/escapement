@@ -1,8 +1,28 @@
+<div align="center">
+
+<img src="App/Icon/freeform/icon_256x256.png" alt="" width="132" height="132">
+
 # Escapement
 
-[![CI](https://github.com/granroth/escapement/actions/workflows/ci.yml/badge.svg)](https://github.com/granroth/escapement/actions/workflows/ci.yml)
+**Time Machine backups, on your schedule.**
 
-Schedule Time Machine backups on your own cadence.
+[![CI](https://github.com/granroth/escapement/actions/workflows/ci.yml/badge.svg)](https://github.com/granroth/escapement/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/granroth/escapement?color=a0711b&label=release)](https://github.com/granroth/escapement/releases/latest)
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-a0711b)](https://github.com/granroth/escapement/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-a0711b)](LICENSE)
+
+[**Website**](https://granroth.com/escapement) &nbsp;·&nbsp;
+[**Download**](https://github.com/granroth/escapement/releases/latest) &nbsp;·&nbsp;
+[**Documentation**](https://granroth.com/escapement/docs.html) &nbsp;·&nbsp;
+[**FAQ**](https://granroth.com/escapement/faq.html)
+
+</div>
+
+<br>
+
+<img src="web/assets/screenshot-main.png" alt="Escapement's main window: a list of Time Machine destinations, one idle with a daily 3:00 AM schedule and one mid-backup showing live progress, beside the schedule editor for the selected disk.">
+
+<br>
 
 macOS lets you back up automatically every hour, every day, every week — or
 not at all. Escapement adds the option Apple left out: *whenever you say*.
@@ -46,7 +66,9 @@ will not change the setting for you: your system-wide backup policy is yours
 to set.
 
 Escapement needs no administrator password, installs no privileged helper, and
-asks for no Full Disk Access.
+does not require Full Disk Access. It offers Full Disk Access once, on first
+run, purely so it can read Time Machine's preferences and warn you when macOS's
+own scheduler is still on; declining costs you only that warning.
 
 ## Status
 
@@ -61,7 +83,11 @@ notifications all live in Settings.
 
 Known limitations: a backup stopped by hand is recorded as completed rather
 than cancelled, because the outcome is inferred from `tmutil status` rather
-than reported; and there is no per-destination detailed log window yet.
+than reported; there is no per-destination detailed log window yet; the
+schedule editor sets a single time of day, though the engine supports several;
+and an hourly window cannot cross midnight. The conflict banner shown when
+macOS's own scheduler is on is a warning, not a guard — it does not disable
+editing or stop the agent.
 
 See `docs/ARCHITECTURE.md` for the design and the platform research behind it,
 and `docs/specs/` for feature-by-feature specifications.

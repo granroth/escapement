@@ -1,0 +1,16 @@
+{# Icons used by the feature cards, keyed by name from _index.md. #}
+{% macro icon(name) %}
+{%- if name == "disk" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="6.5" rx="2"/><rect x="2.5" y="13.5" width="19" height="6.5" rx="2"/><path d="M6.5 7.25h.01M6.5 16.75h.01"/></svg>
+{%- elif name == "clock" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+{%- elif name == "pause" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg>
+{%- elif name == "shield" -%}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.75 20 6v6c0 4.6-3.2 8.2-8 9.25C7.2 20.2 4 16.6 4 12V6z"/><path d="m9 12 2 2 4-4"/></svg>
+{%- endif -%}
+{% endmacro icon %}
+
+{% macro download_arrow() %}
+<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>
+{% endmacro download_arrow %}

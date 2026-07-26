@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% block title %}Download — Escapement{% endblock %}
+{% block description %}{{ page.description }}{% endblock %}
+{% block og_title %}Download Escapement{% endblock %}
+
+{% block content %}
+
+<section class="section">
+  <div class="wrap">
+    <div class="dl-card">
+      <img src="{{ get_url(path='escapement-icon.png') }}" alt="" width="80" height="80">
+      <h1>Escapement for macOS</h1>
+      <p class="version">Version {{ config.extra.version }}</p>
+      <a class="btn btn--primary" href="{{ config.extra.latest_release }}">
+        {{ m::download_arrow() }}
+        Download the disk image
+      </a>
+      <p class="fineprint">
+        Universal (Apple&nbsp;silicon &amp; Intel) &middot; about 5&nbsp;MB &middot;
+        signed and notarized
+      </p>
+      <p class="fineprint">
+        Hosted on GitHub &middot; <a href="{{ config.extra.releases }}">all releases</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="section section--tint">
+  <div class="wrap">
+    <div class="prose" style="margin-inline:auto">
+      {{ page.content | safe }}
+    </div>
+  </div>
+</section>
+
+{% endblock %}

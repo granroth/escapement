@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+
+{% block title %}Escapement — Time Machine backups, on your schedule{% endblock %}
+{% block description %}{{ section.extra.lede }}{% endblock %}
+{% block og_title %}Escapement — Time Machine backups, on your schedule{% endblock %}
+
+{% block content %}
+
+<section class="hero">
+  <div class="wrap">
+    <img class="hero__mark" src="{{ get_url(path='escapement-mark.svg') }}" alt="" width="112" height="112">
+    <h1>{{ section.extra.headline | safe }}</h1>
+    <p class="hero__lede">{{ section.extra.lede }}</p>
+    <div class="hero__actions">
+      <a class="btn btn--primary" href="{{ config.base_url }}/download/">
+        {{ m::download_arrow() }}
+        Download for macOS
+      </a>
+      <a class="btn btn--ghost" href="{{ config.base_url }}/docs/">Read the documentation</a>
+    </div>
+    <p class="hero__meta">
+      {%- for fact in section.extra.facts %}<span>{{ fact }}</span>{% endfor %}
+    </p>
+
+    <figure class="shot">
+      <img src="{{ get_url(path='screenshot-main.png') }}" width="900" height="659"
+           alt="{{ section.extra.screenshot_alt }}">
+    </figure>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="stack-head">
+      <h2>{{ section.extra.frequencies_title }}</h2>
+      <p>{{ section.extra.frequencies_lede }}</p>
+    </div>
+    <div class="chips">
+      {%- for example in section.extra.examples %}
+      <span class="chip">{{ example }}</span>
+      {%- endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="section section--tint">
+  <div class="wrap">
+    <div class="grid">
+      {%- for feature in section.extra.features %}
+      <article class="card">
+        <div class="card__icon">{{ m::icon(name=feature.icon) }}</div>
+        <h3>{{ feature.title }}</h3>
+        <p>{{ feature.body }}</p>
+      </article>
+      {%- endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="prose" style="margin-inline:auto">
+      {{ section.content | safe }}
+    </div>
+  </div>
+</section>
+
+<section class="section section--tint cta-band">
+  <div class="wrap">
+    <h2>{{ section.extra.cta_title }}</h2>
+    <p>{{ section.extra.cta_body }}</p>
+    <div class="hero__actions" style="margin-bottom:0">
+      <a class="btn btn--primary" href="{{ config.base_url }}/download/">
+        {{ m::download_arrow() }}
+        Download for macOS
+      </a>
+      <a class="btn btn--ghost" href="{{ config.base_url }}/faq/">Read the FAQ</a>
+    </div>
+  </div>
+</section>
+
+{% endblock %}

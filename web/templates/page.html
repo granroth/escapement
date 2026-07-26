@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} — Escapement{% endblock %}
+{% block description %}{{ page.description }}{% endblock %}
+{% block og_title %}{{ page.title }} — Escapement{% endblock %}
+
+{% block content %}
+
+<div class="page-head">
+  <div class="wrap">
+    {%- if page.extra.eyebrow %}
+    <p class="eyebrow">{{ page.extra.eyebrow }}</p>
+    {%- endif %}
+    <h1>{{ page.title }}</h1>
+    {%- if page.extra.lede %}
+    <p class="lede">{{ page.extra.lede }}</p>
+    {%- endif %}
+  </div>
+</div>
+
+{% if page.extra.toc %}
+<div class="wrap layout">
+  <nav class="toc" aria-label="On this page">
+    <p class="toc__title">On this page</p>
+    <ol>
+      {%- for h in page.toc %}
+      <li><a href="#{{ h.id }}">{{ h.title }}</a></li>
+      {%- endfor %}
+    </ol>
+  </nav>
+  <div class="prose">
+    {{ page.content | safe }}
+  </div>
+</div>
+{% else %}
+<div class="wrap" style="padding: clamp(2.5rem, 5vw, 4rem) 0 5rem;">
+  <div class="prose" style="margin-inline:auto">
+    {{ page.content | safe }}
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}

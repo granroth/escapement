@@ -120,6 +120,12 @@ rediscover:
   hash mismatch you get from replacing a bundle while its agent is registered.
 - Screenshot the real Dock to check the icon. `NSRunningApplication.icon` and
   `NSWorkspace` lookups return the clipped bundle render and will mislead you.
+- To capture a window, get its `kCGWindowNumber` from
+  `CGWindowListCopyWindowInfo` and pass it to `screencapture -l <id>`. Capturing
+  a screen region (`-R x,y,w,h`) from the coordinates System Events reports
+  gives whatever is *in front* at those coordinates, which on a busy desktop is
+  some other app entirely. Capture by window id and nothing has to be raised,
+  activated, or clicked — no disturbing whatever is on screen.
 - The app ships two icons on purpose — a full-bleed bundle icon that survives
   the system's rounded-rect clip, and the free-form mark installed at runtime.
   See `docs/specs/008-app-icon.md`.

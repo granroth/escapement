@@ -1,0 +1,18 @@
+base_url = "https://granroth.com/escapement"
+title = "Escapement"
+description = "Time Machine backups, on your schedule."
+
+compile_sass = false
+build_search_index = false
+generate_feeds = false
+
+# Relative URLs so the site works from any path, and from a local file://
+# checkout. The deployment target is a subdirectory, not a domain root.
+[markdown]
+smart_punctuation = true
+
+[extra]
+github = "https://github.com/granroth/escapement"
+releases = "https://github.com/granroth/escapement/releases"
+latest_release = "https://github.com/granroth/escapement/releases/latest"
+version = "0.1.0"
