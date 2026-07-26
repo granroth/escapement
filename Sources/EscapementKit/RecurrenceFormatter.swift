@@ -56,6 +56,12 @@ public struct RecurrenceFormatter: Sendable {
         let formatter = DateFormatter()
         formatter.calendar = reference
         formatter.locale = locale
+        // Assigning `calendar` does *not* set the formatter's time zone — that
+        // is a separate property which otherwise defaults to the machine's.
+        // Without this the instant built above (in the injected calendar's
+        // zone) is rendered in the host's zone instead, so the summary reads a
+        // different clock time than the user chose.
+        formatter.timeZone = reference.timeZone
         formatter.timeStyle = .short
         formatter.dateStyle = .none
         return formatter.string(from: date)

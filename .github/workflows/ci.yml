@@ -47,6 +47,16 @@ jobs:
       - name: Test
         run: swift test
 
+      # Run again under a zone that is neither UTC nor the author's, with a
+      # half-hour offset for good measure. Date formatting is easy to write so
+      # that it silently follows the machine's zone instead of the calendar it
+      # was handed — which passes wherever the developer happens to live and
+      # fails everywhere else.
+      - name: Test (alternate time zone)
+        env:
+          TZ: Asia/Kolkata
+        run: swift test
+
       # Ad-hoc signed: this proves the bundle assembles and codesigns, not that
       # it is distributable.
       - name: Assemble the app bundle

@@ -23,6 +23,29 @@ private func norm(_ s: String) -> String {
 
 @Suite("RecurrenceFormatter")
 struct RecurrenceFormatterTests {
+
+    /// The summary must read the same wall-clock time no matter what zone the
+    /// machine is in — `RecurrenceFormatter` is handed a calendar, and that
+    /// calendar's zone is the answer.
+    ///
+    /// This is the regression that shipped: `DateFormatter.calendar` does not
+    /// set the formatter's `timeZone`, so the rendered time silently followed
+    /// the host instead. Every other test in this file uses one fixed zone, so
+    /// the whole suite passed on a machine that happened to be in it and failed
+    /// everywhere else.
+    @Test(
+        "the summary follows the calendar's time zone, not the machine's",
+        arguments: ["America/Phoenix", "UTC", "Asia/Tokyo", "Australia/Lord_Howe"])
+    func followsCalendarTimeZone(zone: String) {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: zone)!
+        let locale = Locale(identifier: "en_US")
+        cal.locale = locale
+        let subject = RecurrenceFormatter(calendar: cal, locale: locale)
+
+        #expect(norm(subject.summary(.daily(times: [t(3)])!)) == "Daily at 3:00 AM")
+        #expect(norm(subject.summary(.daily(times: [t(14, 5)])!)) == "Daily at 2:05 PM")
+    }
     private let f = formatter()
 
     private func summary(_ r: Recurrence) -> String { norm(f.summary(r)) }

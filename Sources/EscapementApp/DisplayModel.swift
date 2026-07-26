@@ -114,6 +114,8 @@ struct RowBuilder {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.locale = locale
+        // As in RecurrenceFormatter: `calendar` does not carry the time zone.
+        formatter.timeZone = calendar.timeZone
         formatter.doesRelativeDateFormatting = true
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
