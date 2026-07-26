@@ -20,7 +20,7 @@
 
 <br>
 
-<img src="web/assets/screenshot-main.png" alt="Escapement's main window: a list of Time Machine destinations, one idle with a daily 3:00 AM schedule and one mid-backup showing live progress, beside the schedule editor for the selected disk.">
+<img src="web/static/screenshot-main.png" alt="Escapement's main window: a list of Time Machine destinations, one idle with a daily 3:00 AM schedule and one mid-backup showing live progress, beside the schedule editor for the selected disk.">
 
 <br>
 
