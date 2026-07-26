@@ -1,0 +1,72 @@
+# Escapement CI — every push and pull request.
+#
+# Runs the EscapementKit suite and proves the app bundle still assembles. The
+# bundle step matters: most of what can break at release time (a missing icon,
+# a nested-bundle layout mistake, a codesign argument) lives in
+# scripts/build-app.sh, not in the Swift sources, and the test suite alone
+# would not notice.
+#
+# Signing here is ad-hoc. The Developer ID lives only in the release workflow,
+# so this runs unchanged on forks and pull requests, which have no secrets.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  # A new push to the same ref supersedes an in-flight run.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    # macos-latest tracks the current stable image; the toolchain check below
+    # is what actually guards the build.
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The package is swift-tools-version 6.0, so the toolchain has to be
+      # Swift 6 or newer. Assert that rather than pinning an Xcode path, which
+      # rots every time the runner image rotates.
+      - name: Check the toolchain
+        run: |
+          swift --version
+          major="$(swift -version 2>&1 | sed -n 's/.*Apple Swift version \([0-9]*\).*/\1/p' | head -1)"
+          if [ -z "$major" ] || [ "$major" -lt 6 ]; then
+            echo "::error::Swift 6 or newer is required; runner has $(swift --version | head -1)"
+            exit 1
+          fi
+
+      - name: Build
+        run: swift build -c release
+
+      - name: Test
+        run: swift test
+
+      # Ad-hoc signed: this proves the bundle assembles and codesigns, not that
+      # it is distributable.
+      - name: Assemble the app bundle
+        env:
+          ESCAPEMENT_SIGN_IDENTITY: "-"
+        run: scripts/build-app.sh release
+
+      - name: Check the bundle came out right
+        run: |
+          APP=.build/Escapement.app
+          AGENT="$APP/Contents/Library/LoginItems/EscapementAgent.app"
+          test -x "$APP/Contents/MacOS/Escapement"        || { echo "::error::app executable missing"; exit 1; }
+          test -x "$AGENT/Contents/MacOS/EscapementAgent" || { echo "::error::agent executable missing"; exit 1; }
+          test -f "$AGENT/Contents/Info.plist"            || { echo "::error::agent Info.plist missing"; exit 1; }
+          # The agent resolves SMAppService against its own bundle, so this
+          # copy of the launchd plist is load-bearing, not redundant.
+          test -f "$AGENT/Contents/Library/LaunchAgents/com.granroth.Escapement.Agent.plist" \
+            || { echo "::error::agent's own copy of the launchd plist missing"; exit 1; }
+          id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$AGENT/Contents/Info.plist")"
+          if [ "$id" != "com.granroth.Escapement.Agent" ]; then
+            echo "::error::agent bundle identifier is '$id' — it must differ from the app's"
+            exit 1
+          fi

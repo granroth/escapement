@@ -1,0 +1,188 @@
+# Escapement release — push a `vMAJOR.MINOR.PATCH` tag to build, sign,
+# notarize and publish a universal .dmg.
+#
+# The release is created as a DRAFT. Publishing is a deliberate human act after
+# installing the artifact and confirming it opens clean on a machine that has
+# never seen the app.
+#
+# Unlike CI, this workflow refuses to run without the Apple credentials. A
+# release that is quietly ad-hoc signed looks fine here and fails on every
+# user's machine with "Apple could not verify…", which is the worst possible
+# place to discover it.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse and guard the tag
+        id: version
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' is not vMAJOR.MINOR.PATCH — refusing to release."
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Require Apple credentials
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          missing=""
+          for v in CERT CERT_PASSWORD IDENTITY API_ISSUER API_KEY API_KEY_CONTENT; do
+            [ -z "${!v}" ] && missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing Apple secrets:$missing — see docs/RELEASING.md."
+            exit 1
+          fi
+
+      - name: Check the toolchain
+        run: |
+          swift --version
+          major="$(swift -version 2>&1 | sed -n 's/.*Apple Swift version \([0-9]*\).*/\1/p' | head -1)"
+          if [ -z "$major" ] || [ "$major" -lt 6 ]; then
+            echo "::error::Swift 6 or newer is required; runner has $(swift --version | head -1)"
+            exit 1
+          fi
+
+      # A throwaway keychain, unlocked for the life of the job. The partition
+      # list is what stops codesign blocking on an interactive "allow access?"
+      # prompt that nobody is there to answer.
+      - name: Import the Developer ID certificate
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$CERT" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+          echo "Signing identities available:"
+          security find-identity -v -p codesigning
+
+      - name: Write the App Store Connect API key
+        env:
+          API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          printf '%s\n' "$API_KEY_CONTENT" > "$RUNNER_TEMP/apple-api-key.p8"
+          chmod 600 "$RUNNER_TEMP/apple-api-key.p8"
+
+      # The tag is the source of truth for the version, so the in-tree 0.1.0
+      # never has to be kept in sync by hand.
+      - name: Stamp the version from the tag
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          for plist in App/Info.plist App/AgentInfo.plist; do
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" "$plist"
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$plist"
+          done
+
+      - name: Build and sign (universal)
+        env:
+          ESCAPEMENT_UNIVERSAL: "1"
+          ESCAPEMENT_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: scripts/build-app.sh release
+
+      # Notarize the app itself and staple the ticket into the bundle, so the
+      # app validates even after a user drags it out of the image — stapling
+      # only the image would leave the copied app depending on an online check.
+      - name: Notarize the app
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          ditto -c -k --keepParent .build/Escapement.app "$RUNNER_TEMP/Escapement.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/Escapement.zip" \
+            --key "$RUNNER_TEMP/apple-api-key.p8" \
+            --key-id "$API_KEY" --issuer "$API_ISSUER" \
+            --wait --timeout 30m
+          xcrun stapler staple .build/Escapement.app
+
+      - name: Build the disk image
+        env:
+          ESCAPEMENT_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: scripts/make-dmg.sh "${{ steps.version.outputs.version }}"
+
+      - name: Notarize the disk image
+        env:
+          API_KEY: ${{ secrets.APPLE_API_KEY }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          DMG=".build/Escapement-${{ steps.version.outputs.version }}.dmg"
+          xcrun notarytool submit "$DMG" \
+            --key "$RUNNER_TEMP/apple-api-key.p8" \
+            --key-id "$API_KEY" --issuer "$API_ISSUER" \
+            --wait --timeout 30m
+          xcrun stapler staple "$DMG"
+
+      # The gate that actually predicts what a user sees. spctl assesses the
+      # artifact the way Gatekeeper will; "Notarized Developer ID" is the only
+      # acceptable source.
+      - name: Verify the artifact the way Gatekeeper will
+        run: |
+          DMG=".build/Escapement-${{ steps.version.outputs.version }}.dmg"
+          xcrun stapler validate "$DMG"
+          xcrun stapler validate .build/Escapement.app
+          spctl -a -vvv -t install "$DMG" 2>&1 | tee /tmp/spctl.txt
+          grep -q "source=Notarized Developer ID" /tmp/spctl.txt || {
+            echo "::error::Disk image is not notarized — refusing to publish."
+            exit 1
+          }
+          echo "Architectures: $(lipo -archs .build/Escapement.app/Contents/MacOS/Escapement)"
+
+      - name: Checksum
+        run: |
+          cd .build
+          shasum -a 256 "Escapement-${{ steps.version.outputs.version }}.dmg" \
+            > "Escapement-${{ steps.version.outputs.version }}.dmg.sha256"
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --draft \
+            --title "Escapement $TAG" \
+            --notes "Universal build for Apple silicon and Intel, notarized by Apple.
+
+          Requires macOS 14 or later, and Time Machine's backup frequency set to **Manually** in System Settings.
+
+          Install by opening the disk image and dragging Escapement to Applications." \
+            ".build/Escapement-$V.dmg" \
+            ".build/Escapement-$V.dmg.sha256"
+
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/apple-api-key.p8" "$RUNNER_TEMP/cert.p12"
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true

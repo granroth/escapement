@@ -1,5 +1,7 @@
 # Escapement
 
+[![CI](https://github.com/granroth/escapement/actions/workflows/ci.yml/badge.svg)](https://github.com/granroth/escapement/actions/workflows/ci.yml)
+
 Schedule Time Machine backups on your own cadence.
 
 macOS lets you back up automatically every hour, every day, every week — or
@@ -23,6 +25,13 @@ by asking Time Machine to start a backup at the moments you chose.
 > "automatic-like" backups [...] it provides custom schedulers the ability to
 > achieve some (but not all) behavior normally exhibited when operating in
 > automatic mode.
+
+## Install
+
+Download the latest `.dmg` from
+[Releases](https://github.com/granroth/escapement/releases), open it, and drag
+Escapement to Applications. The build is universal (Apple silicon and Intel)
+and notarized by Apple, so it opens without a Gatekeeper warning.
 
 ## Requirements
 
@@ -78,6 +87,14 @@ ESCAPEMENT_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 
 The background agent is a nested helper application inside the bundle, so it is
 signed first and the app around it second; both get the Hardened Runtime.
+
+Add `ESCAPEMENT_UNIVERSAL=1` for a universal binary; releases always do. If the
+configured signing identity is not in your keychain the build falls back to
+ad-hoc signing, so a clean checkout always builds — but an ad-hoc app cannot
+register its background agent, because `SMAppService` refuses one.
+
+Releases are cut by pushing a `vMAJOR.MINOR.PATCH` tag; see
+`docs/RELEASING.md`. Contributor guidance is in `AGENTS.md`.
 
 The icons are committed, so the icon step is only needed when the art in
 `App/Icon/` changes. Escapement ships two of them — a full-bleed bundle icon
