@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import ServiceManagement
 
@@ -22,6 +23,39 @@ struct AgentManager {
 
     func disable() async throws {
         try await service.unregister()
+    }
+
+    /// Whether the agent process is actually alive, as opposed to merely
+    /// registered. The two differ exactly when a registration has gone stale.
+    ///
+    /// Matched on executable name rather than bundle identifier: the agent is a
+    /// nested helper app, and matching the name keeps this working regardless
+    /// of how the two bundles' identifiers are arranged.
+    var isRunning: Bool {
+        NSWorkspace.shared.runningApplications.contains {
+            $0.executableURL?.lastPathComponent == "EscapementAgent"
+        }
+    }
+
+    /// Rebuilds a stale registration.
+    ///
+    /// Two behaviours here were established on real hardware, and both are easy
+    /// to get wrong:
+    ///
+    /// 1. `register()` alone is not enough, and is actively harmful on a healthy
+    ///    service: it re-submits the job, terminating the running agent, without
+    ///    re-triggering `RunAtLoad` — so the agent stays stopped.
+    /// 2. Unregistering does not take effect immediately. Registering again in
+    ///    the same breath is a no-op against a record that still reads
+    ///    `.enabled`, which leaves the service wedged: `SMAppService` reports it
+    ///    enabled while launchd has no such job at all. So wait for the
+    ///    deregistration to actually land before re-submitting.
+    func reregister() async throws {
+        try? await service.unregister()
+        for _ in 0..<20 where service.status == .enabled {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        try service.register()
     }
 
     func openLoginItemsSettings() {

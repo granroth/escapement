@@ -121,19 +121,8 @@ struct RowBuilder {
     }
 }
 
-extension BackupActivity.Phase {
-    var displayName: String {
-        switch self {
-        case .mountingDiskImage: return "Mounting backup disk"
-        case .preparing: return "Preparing"
-        case .findingChanges: return "Finding changes"
-        case .copying: return "Copying"
-        case .thinning: return "Cleaning up"
-        case .finishing: return "Finishing"
-        case .other(let raw): return raw.isEmpty ? "Backing up" : raw
-        }
-    }
-}
+// `BackupActivity.Phase.displayName` moved to EscapementKit when the agent's
+// menu bar extra needed the same wording.
 
 extension Destination.Kind {
     var displayName: String {

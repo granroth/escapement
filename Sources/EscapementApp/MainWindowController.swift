@@ -165,6 +165,35 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
             return
         }
 
+        // Registered but not running. The automatic repair on launch handles
+        // the common case, but SMAppService can land in states it will not come
+        // out of on its own, and silently claiming backups are on would be the
+        // worst outcome — so say so and name the way out.
+        if controller.isAgentStale {
+            banner.show(
+                level: .warning,
+                message:
+                    "Background backups are turned on but aren’t running, so your schedules "
+                    + "won’t fire. Turning them off and on again usually reconnects them.",
+                buttonTitle: "Open Settings…"
+            ) { [weak self] in self?.showSettings() }
+            return
+        }
+
+        // A pause is self-inflicted and reversible, so it is stated plainly with
+        // a way out — not dressed up as a problem the user has to diagnose.
+        if controller.isPaused {
+            banner.show(
+                level: .caution,
+                message:
+                    controller.agentState.isPausedIndefinitely
+                    ? "Scheduled backups are paused until you resume them."
+                    : "Scheduled backups are paused.",
+                buttonTitle: "Resume"
+            ) { [weak controller] in controller?.resume() }
+            return
+        }
+
         if controller.automaticState == .automatic {
             banner.show(
                 level: .caution,
@@ -296,6 +325,10 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
 
     @objc func toggleInspector() {
         inspectorItem.animator().isCollapsed.toggle()
+    }
+
+    func showSettings() {
+        SettingsWindowController.shared(controller: controller).showWindow(nil)
     }
 
     @objc func showLog(_ sender: Any?) {

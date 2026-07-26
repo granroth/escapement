@@ -4,11 +4,19 @@
 <dict>
 	<key>Label</key>
 	<string>com.granroth.Escapement.Agent</string>
-	<!-- Relative to the app bundle, so the agent works wherever the app lives. -->
+	<!-- Relative to the app bundle, so the agent works wherever the app lives.
+	     Points into the nested helper application rather than at a bare
+	     executable, so the agent has its own bundle identity. -->
 	<key>BundleProgram</key>
-	<string>Contents/MacOS/EscapementAgent</string>
+	<string>Contents/Library/LoginItems/EscapementAgent.app/Contents/MacOS/EscapementAgent</string>
 	<key>RunAtLoad</key>
 	<true/>
+	<!-- Deliberately unconditional. Nothing in the design needs a clean exit to
+	     stick: the only deliberate stop is Turn Off, which unregisters the job
+	     entirely, and Pause is a state the running agent honours. A
+	     `SuccessfulExit: false` variant was tried and reverted — it bought
+	     nothing and turned any stray termination into a silent, permanent stop
+	     to scheduling. -->
 	<key>KeepAlive</key>
 	<true/>
 	<key>AssociatedBundleIdentifiers</key>

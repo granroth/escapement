@@ -41,16 +41,18 @@ asks for no Full Disk Access.
 
 ## Status
 
-Nominally working. The recurrence engine, Time Machine adapter, scheduling
-core, run loop, and an AppKit status window and schedule editor are implemented
-and tested; the app has been verified driving real backups on a live Mac.
+Working, and verified driving real backups on a live Mac.
 
-One honest limitation for now: **scheduling runs while the app is open.**
-Closing the window keeps it running in the Dock, but quitting it stops the
-scheduler. Relaunch-at-login and a fully background agent are the next
-refinement — the scheduling logic is already isolated in `EscapementKit` and
-called identically either way, so that step is repackaging, not a rewrite. See
-`docs/specs/005-app-ui.md` for what is deferred.
+Schedules are run by a small background agent, registered as a login item, so
+they fire whether or not the app is open. The agent keeps a menu bar extra —
+what is happening, when the last backup finished, back up now, stop, pause —
+and the app itself is the window where destinations are configured. Turning
+background backups on or off, hiding the menu bar icon, and failure
+notifications all live in Settings.
+
+Known limitations: a backup stopped by hand is recorded as completed rather
+than cancelled, because the outcome is inferred from `tmutil status` rather
+than reported; and there is no per-destination detailed log window yet.
 
 See `docs/ARCHITECTURE.md` for the design and the platform research behind it,
 and `docs/specs/` for feature-by-feature specifications.
@@ -64,8 +66,18 @@ swift scripts/make-icons.swift   # rebuild the icons after changing the art
 ```
 
 The app builds from `swift build` plus a bundling script — there is no Xcode
-project to drift out of sync. Signing uses a Developer ID; adjust the identity
-in `scripts/build-app.sh` for your own.
+project to drift out of sync.
+
+Signing uses a Developer ID. To build under your own identity, set
+`ESCAPEMENT_SIGN_IDENTITY` rather than editing the script:
+
+```sh
+ESCAPEMENT_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+  scripts/build-app.sh release
+```
+
+The background agent is a nested helper application inside the bundle, so it is
+signed first and the app around it second; both get the Hardened Runtime.
 
 The icons are committed, so the icon step is only needed when the art in
 `App/Icon/` changes. Escapement ships two of them — a full-bleed bundle icon

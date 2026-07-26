@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  The background agent is its own nested application bundle, living at
+	  Contents/Library/LoginItems/EscapementAgent.app.
+
+	  It used to be a bare executable in Contents/MacOS, which meant its
+	  Bundle.main was the *app's* bundle and it therefore registered with
+	  LaunchServices under com.granroth.Escapement — the same identifier as the
+	  GUI. Two consequences, both proven on hardware:
+
+	    * Quit AppleEvents addressed to "Escapement" were delivered to the
+	      agent, terminating the scheduler.
+	    * Asking LaunchServices to open the app while the agent was running
+	      activated the *agent* instead of launching the GUI, so the menu bar's
+	      "Open Escapement" put a Dock icon up and never showed a window.
+
+	  Its own identifier removes both.
+	-->
+	<key>CFBundleName</key>
+	<string>EscapementAgent</string>
+	<key>CFBundleDisplayName</key>
+	<string>Escapement Agent</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.granroth.Escapement.Agent</string>
+	<key>CFBundleExecutable</key>
+	<string>EscapementAgent</string>
+	<key>CFBundleIconFile</key>
+	<string>EscapementFreeform</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<!-- No Dock tile and no app switcher entry: it is a menu bar agent. -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSSupportsAutomaticTermination</key>
+	<false/>
+	<key>NSSupportsSuddenTermination</key>
+	<false/>
+</dict>
+</plist>

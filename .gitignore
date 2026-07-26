@@ -6,3 +6,6 @@ xcuserdata/
 
 # built app bundle
 .build/Escapement.app/
+
+# local agent/editor state
+.claude/

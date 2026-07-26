@@ -25,6 +25,7 @@ private struct Harness {
     let clock: TestClock
     let config: ConfigurationStore
     let history: HistoryStore
+    let state: StateStore
     let runner: SchedulerRunner
     private let dir: URL
 
@@ -34,10 +35,12 @@ private struct Harness {
             .appendingPathComponent("escapement-runner-\(UUID().uuidString)", isDirectory: true)
         config = ConfigurationStore(url: dir.appendingPathComponent("configuration.json"))
         history = HistoryStore(url: dir.appendingPathComponent("history.json"))
+        state = StateStore(url: dir.appendingPathComponent("state.json"))
         runner = SchedulerRunner(
             control: fake,
             configuration: config,
             history: history,
+            state: state,
             scheduler: Scheduler(calendar: calendar()),
             now: clock.now)
     }
@@ -51,6 +54,12 @@ private struct Harness {
                 destinationID: id, recurrence: .daily(times: [TimeOfDay(hour: hour, minute: 0)!])!,
                 isEnabled: enabled, effectiveFrom: from))
         try config.save(c)
+    }
+
+    func setPaused(until: Date) throws {
+        var s = try state.load()
+        s.pause(until: until)
+        try state.save(s)
     }
 }
 
@@ -226,5 +235,114 @@ struct SchedulerRunnerTests {
 
         let next = await h.runner.nextWakeUp()
         #expect(next == date(2026, 3, 11, 3, 0))
+    }
+
+    // MARK: - Pause
+
+    @Test("a due backup does not start while paused")
+    func pauseSuppressesScheduledFire() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        try h.setPaused(until: date(2026, 3, 10, 6, 0))
+
+        await h.runner.evaluate()
+
+        #expect(await h.fake.startCalls.isEmpty)
+        #expect(try h.history.load().isEmpty)
+    }
+
+    @Test("the schedule fires again once the pause expires")
+    func pauseExpiryResumesSchedule() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        try h.setPaused(until: date(2026, 3, 10, 6, 0))
+
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls.isEmpty)
+
+        h.clock.set(date(2026, 3, 10, 6, 1))
+        await h.runner.evaluate()
+
+        #expect(await h.fake.startCalls == ["A"])
+    }
+
+    @Test("a manual backUpNow still runs while paused — pause suppresses the schedule, not the user")
+    func pauseDoesNotBlockManual() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setPaused(until: date(2026, 3, 10, 18, 0))
+
+        await h.runner.backUpNow(destinationID: "A")
+
+        #expect(await h.fake.startCalls == ["A"])
+        #expect(try h.history.load()[0].trigger == .manual)
+    }
+
+    @Test("an open run is still closed out while paused")
+    func pauseStillReconciles() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        // A record stranded open by a previous process, with the system idle.
+        try h.history.append(
+            BackupRun(
+                destinationID: "A", trigger: .scheduled,
+                startedAt: date(2026, 3, 10, 3, 0)))
+        try h.setPaused(until: date(2026, 3, 10, 18, 0))
+
+        await h.runner.evaluate()
+
+        // Pausing must not strand history: bookkeeping continues regardless.
+        #expect(isFailed(try h.history.load()[0].outcome))
+    }
+
+    @Test("nextWakeUp returns the pause expiry so the agent resumes on its own")
+    func nextWakeUpDuringPause() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 1))
+        try h.setPaused(until: date(2026, 3, 10, 18, 0))
+
+        // Without this the agent would sleep past the expiry and stay dormant
+        // until something else happened to wake it.
+        #expect(await h.runner.nextWakeUp() == date(2026, 3, 10, 18, 0))
+    }
+
+    @Test("a long pause does not fire a burst of catch-up backups when it ends")
+    func pauseDoesNotCauseCatchUpBurst() async throws {
+        // Paused across three days of a daily 03:00 schedule. When it ends the
+        // engine must run one backup, not one per missed occurrence.
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 1))
+        try h.setPaused(until: date(2026, 3, 13, 12, 0))
+
+        // Up to but not including the expiry instant — the pause window is
+        // half-open, so noon on the 13th is already resumed.
+        for day in 10...12 {
+            h.clock.set(date(2026, 3, day, 12, 0))
+            await h.runner.evaluate()
+        }
+        #expect(await h.fake.startCalls.isEmpty)
+
+        // Pause over: exactly one catch-up, and no second one on the next tick.
+        h.clock.set(date(2026, 3, 13, 12, 1))
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls.count == 1)
+
+        h.clock.advance(by: 30)
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls.count == 1)
+    }
+
+    @Test("nextWakeUp ignores a pause that has already expired")
+    func nextWakeUpAfterPauseExpired() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 1))
+        try h.setPaused(until: date(2026, 3, 10, 9, 0))
+
+        #expect(await h.runner.nextWakeUp() == date(2026, 3, 11, 3, 0))
     }
 }

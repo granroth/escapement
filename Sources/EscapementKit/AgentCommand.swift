@@ -7,6 +7,14 @@ import Foundation
 public enum AgentCommand: Codable, Hashable, Sendable {
     case backUpNow(destinationID: String)
     case stop
+    /// Suppress scheduled backups until the given instant. A `nil` date means
+    /// indefinitely — until the user resumes.
+    ///
+    /// Pause is a command rather than a configuration edit because the agent is
+    /// the sole writer of the pause state: its own menu bar extra can pause too,
+    /// and two processes writing one file would race.
+    case pause(until: Date?)
+    case resume
 }
 
 /// Reads and writes the pending manual command.

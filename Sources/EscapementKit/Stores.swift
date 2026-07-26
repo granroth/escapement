@@ -25,6 +25,30 @@ public enum EscapementPaths {
     public static func commandURL(fileManager: FileManager = .default) -> URL {
         supportDirectory(fileManager: fileManager).appendingPathComponent("command.json")
     }
+
+    /// Agent-owned state published for the GUI to read.
+    public static func stateURL(fileManager: FileManager = .default) -> URL {
+        supportDirectory(fileManager: fileManager).appendingPathComponent("state.json")
+    }
+}
+
+/// Reads and writes the agent's own state. The agent is the sole writer; the
+/// GUI reads it for display and asks for changes through `AgentCommand`.
+public struct StateStore: Sendable {
+    private let store: JSONFileStore<AgentState>
+
+    public init(url: URL = EscapementPaths.stateURL()) {
+        store = JSONFileStore(url: url, default: AgentState())
+    }
+
+    public func load() throws -> AgentState { try store.load() }
+    public func save(_ state: AgentState) throws { try store.save(state) }
+
+    /// Read-modify-write under the store's lock. Safe because only the agent
+    /// writes this file, so the in-process lock is sufficient.
+    public func mutate(_ transform: @Sendable (inout AgentState) -> Void) throws {
+        try store.mutate(transform)
+    }
 }
 
 /// Reads and writes the user's schedules.

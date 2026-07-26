@@ -1,4 +1,5 @@
 import AppKit
+import EscapementKit
 
 /// Builds the app's menu bar in code. Every user action has a menu path, not
 /// only a toolbar button. Menu items that make no sense for a single-window
@@ -17,6 +18,11 @@ enum MainMenu {
         appMenu.addItem(
             withTitle: "About Escapement",
             action: #selector(AppDelegate.showAbout(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let settings = appMenu.addItem(
+            withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)),
+            keyEquivalent: ",")
+        settings.keyEquivalentModifierMask = .command
         appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Hide Escapement", action: #selector(NSApplication.hide(_:)),
@@ -39,12 +45,21 @@ enum MainMenu {
             withTitle: "Stop Backup", action: #selector(AppDelegate.stopBackup(_:)),
             keyEquivalent: ".")
         scheduleMenu.addItem(.separator())
+        // Pause is a verb, so it belongs here. The background on/off switch is
+        // a preference and lives in Settings, not in this menu.
+        let pause = NSMenuItem(title: "Pause Backups", action: nil, keyEquivalent: "")
+        let pauseSubmenu = NSMenu()
+        for option in PauseOption.allCases {
+            let item = pauseSubmenu.addItem(
+                withTitle: option.title, action: #selector(AppDelegate.pauseBackups(_:)),
+                keyEquivalent: "")
+            item.representedObject = option
+        }
+        pause.submenu = pauseSubmenu
+        scheduleMenu.addItem(pause)
         scheduleMenu.addItem(
-            withTitle: "Enable Background Backups",
-            action: #selector(AppDelegate.enableBackground(_:)), keyEquivalent: "")
-        scheduleMenu.addItem(
-            withTitle: "Disable Background Backups",
-            action: #selector(AppDelegate.disableBackground(_:)), keyEquivalent: "")
+            withTitle: "Resume Backups", action: #selector(AppDelegate.resumeBackups(_:)),
+            keyEquivalent: "")
         scheduleMenu.addItem(.separator())
         let refresh = scheduleMenu.addItem(
             withTitle: "Refresh", action: #selector(AppDelegate.refresh(_:)), keyEquivalent: "r")

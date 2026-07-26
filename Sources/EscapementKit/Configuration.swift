@@ -1,6 +1,11 @@
 import Foundation
 
-/// The persisted set of per-destination schedules.
+/// The persisted schedules and the GUI-owned preferences that go with them.
+///
+/// The GUI is the sole writer of this file (see `ARCHITECTURE.md`): the file
+/// lock in `JSONFileStore` is per-process and cannot serialise the two
+/// processes, so anything the *agent* needs to write lives in `AgentState`
+/// instead.
 public struct Configuration: Codable, Hashable, Sendable {
 
     /// The current on-disk format version. Bumped only on a breaking change.
@@ -9,9 +14,28 @@ public struct Configuration: Codable, Hashable, Sendable {
     public private(set) var schemaVersion: Int
     public private(set) var schedules: [DestinationSchedule]
 
-    public init(schedules: [DestinationSchedule] = []) {
+    /// Whether the agent shows its menu bar extra.
+    ///
+    /// A GUI-owned preference living in the GUI-owned file, so the single-writer
+    /// rule holds; the agent watches the support directory and picks the change
+    /// up on its next tick. A menu bar item the user cannot hide would be
+    /// un-Mac-like, and Settings is the only place left to bring it back.
+    public var showsMenuBarIcon: Bool
+
+    /// Whether the agent posts a notification when a backup fails. Off by
+    /// default: a background thing that starts talking uninvited is worse than
+    /// one the user turns on deliberately.
+    public var notifiesOnFailure: Bool
+
+    public init(
+        schedules: [DestinationSchedule] = [],
+        showsMenuBarIcon: Bool = true,
+        notifiesOnFailure: Bool = false
+    ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.schedules = schedules
+        self.showsMenuBarIcon = showsMenuBarIcon
+        self.notifiesOnFailure = notifiesOnFailure
     }
 
     /// The schedule for a destination, if one exists.
@@ -37,6 +61,8 @@ public struct Configuration: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case schedules
+        case showsMenuBarIcon
+        case notifiesOnFailure
     }
 
     public init(from decoder: any Decoder) throws {
@@ -46,5 +72,12 @@ public struct Configuration: Codable, Hashable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .schemaVersion)
             ?? Self.currentSchemaVersion
         schedules = try container.decode([DestinationSchedule].self, forKey: .schedules)
+        // A file predating the preference decodes as showing the icon, which is
+        // the default for a fresh install too. No schema bump: an older build
+        // simply ignores the key.
+        showsMenuBarIcon =
+            try container.decodeIfPresent(Bool.self, forKey: .showsMenuBarIcon) ?? true
+        notifiesOnFailure =
+            try container.decodeIfPresent(Bool.self, forKey: .notifiesOnFailure) ?? false
     }
 }

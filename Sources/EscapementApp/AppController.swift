@@ -1,6 +1,7 @@
 import AppKit
 import EscapementKit
 import ServiceManagement
+import UserNotifications
 
 /// The app's live state and the loop that keeps it current.
 ///
@@ -16,6 +17,7 @@ final class AppController {
     private let configurationStore = ConfigurationStore()
     private let historyStore = HistoryStore()
     private let commandStore = CommandStore()
+    private let stateStore = StateStore()
     private let agent = AgentManager()
     let calendar = Calendar.current
     let locale = Locale.current
@@ -27,6 +29,13 @@ final class AppController {
     private(set) var configuration = Configuration()
     private(set) var history: [BackupRun] = []
     private(set) var agentStatus: SMAppService.Status = .notRegistered
+    /// The agent's own published state. Read-only here: the agent is its sole
+    /// writer, so changing it goes through `CommandStore`.
+    private(set) var agentState = AgentState()
+    /// Registered, but no agent process alive — a registration that has gone
+    /// stale. Worth surfacing, because every other signal says backups are on
+    /// while nothing is actually scheduled to run.
+    private(set) var isAgentStale = false
 
     private var observers: [() -> Void] = []
     private var loop: Task<Void, Never>?
@@ -35,7 +44,37 @@ final class AppController {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake),
             name: NSWorkspace.didWakeNotification, object: nil)
+        reregisterAgentIfStale()
         loop = Task { await runLoop() }
+    }
+
+    /// Repairs a registration that has gone stale, and only then.
+    ///
+    /// Replacing the bundle — an update, or a rebuild during development —
+    /// leaves the registration pointing at the old code-signing hash, and
+    /// launchd then refuses to start the agent: registered, but not running.
+    /// That combination is the signal, and re-registering from the new build
+    /// reconciles it.
+    ///
+    /// Crucially this must NOT run against a healthy agent. Verified on real
+    /// hardware: `register()` on an already-registered service re-submits the
+    /// job, which terminates the running agent, and does not re-trigger
+    /// `RunAtLoad` — so an unconditional re-register silently stopped the
+    /// scheduler on every launch and left it stopped. The old `KeepAlive: true`
+    /// used to paper over that by restarting it instantly; now that a clean
+    /// exit is allowed to stick, nothing does.
+    private func reregisterAgentIfStale() {
+        guard agent.status == .enabled, !agent.isRunning else { return }
+        Task {
+            do {
+                try await agent.reregister()
+            } catch {
+                // Not fatal: the banner and Settings still report the real
+                // status, and the user can turn it off and on again.
+                NSLog("Escapement: could not repair the agent registration: \(error)")
+            }
+            await refreshState()
+        }
     }
 
     /// Registers a closure called on the main actor whenever live state changes.
@@ -69,6 +108,9 @@ final class AppController {
     /// Whether the background agent is enabled and running.
     var isAgentEnabled: Bool { agentStatus == .enabled }
 
+    /// Whether scheduled backups are currently suppressed.
+    var isPaused: Bool { agentState.isPaused(at: Date()) }
+
     // MARK: - Manual actions (routed to the agent)
 
     func backUpNow(destinationID: String) {
@@ -86,7 +128,74 @@ final class AppController {
         requestRefresh()
     }
 
+    /// Asks the agent to suppress scheduled backups. The GUI never writes the
+    /// pause itself — the agent is the sole writer of `state.json`.
+    func pause(_ option: PauseOption) {
+        guard isAgentEnabled else { return }
+        try? commandStore.post(.pause(until: option.expiry(from: Date(), calendar: calendar)))
+        requestRefresh()
+    }
+
+    func resume() {
+        guard isAgentEnabled else { return }
+        try? commandStore.post(.resume)
+        requestRefresh()
+    }
+
     // MARK: - Configuration
+
+    /// Persists a preference change, reporting whether it actually landed.
+    ///
+    /// The in-memory copy is updated only on a successful write. Assigning it
+    /// unconditionally would show the new value, and then the refresh loop —
+    /// which re-reads the file every few seconds — would silently revert the
+    /// control with no explanation of why.
+    @discardableResult
+    private func updateConfiguration(_ change: (inout Configuration) -> Void) -> Bool {
+        var config = configuration
+        change(&config)
+        do {
+            try configurationStore.save(config)
+        } catch {
+            notify()  // put the control back where the stored value says
+            return false
+        }
+        configuration = config
+        notify()
+        return true
+    }
+
+    @discardableResult
+    func setShowsMenuBarIcon(_ shows: Bool) -> Bool {
+        updateConfiguration { $0.showsMenuBarIcon = shows }
+    }
+
+    @discardableResult
+    func setNotifiesOnFailure(_ notifies: Bool) -> Bool {
+        updateConfiguration { $0.notifiesOnFailure = notifies }
+    }
+
+    /// Called when the user asked for failure notifications but the system
+    /// refused permission, so the UI can explain instead of quietly lying.
+    var onNotificationAuthorizationDenied: (() -> Void)?
+
+    /// Asks for notification permission from the GUI, where the user just
+    /// clicked, rather than from the agent.
+    ///
+    /// The result is acted on: if permission is refused, the preference goes
+    /// back off. Leaving it on would promise notifications that can never
+    /// arrive.
+    func requestNotificationAuthorization() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) {
+            granted, _ in
+            guard !granted else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.setNotifiesOnFailure(false)
+                self.onNotificationAuthorizationDenied?()
+            }
+        }
+    }
 
     func apply(_ schedule: DestinationSchedule) {
         var config = configuration
@@ -171,6 +280,8 @@ final class AppController {
         self.configuration = (try? configurationStore.load()) ?? configuration
         self.history = (try? historyStore.load()) ?? history
         self.agentStatus = agent.status
+        self.agentState = (try? stateStore.load()) ?? agentState
+        self.isAgentStale = agent.status == .enabled && !agent.isRunning
         notify()
     }
 

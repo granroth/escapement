@@ -28,6 +28,7 @@ public actor SchedulerRunner {
     private let control: any TimeMachineControlling
     private let configuration: ConfigurationStore
     private let history: HistoryStore
+    private let state: StateStore
     private let scheduler: Scheduler
     private let now: @Sendable () -> Date
 
@@ -53,6 +54,7 @@ public actor SchedulerRunner {
         control: any TimeMachineControlling,
         configuration: ConfigurationStore,
         history: HistoryStore,
+        state: StateStore = StateStore(),
         scheduler: Scheduler,
         now: @escaping @Sendable () -> Date,
         startupGrace: TimeInterval = 120,
@@ -62,6 +64,7 @@ public actor SchedulerRunner {
         self.control = control
         self.configuration = configuration
         self.history = history
+        self.state = state
         self.scheduler = scheduler
         self.now = now
         self.startupGrace = startupGrace
@@ -85,6 +88,14 @@ public actor SchedulerRunner {
         reconcileOpenRuns(activity: activity)
 
         let config = (try? configuration.load()) ?? Configuration()
+
+        // A pause suppresses *scheduled* fires only, and only from here down:
+        // the reconciliation above still runs, so pausing never strands an open
+        // run in history. A manual `backUpNow` is deliberately unaffected —
+        // pausing suppresses the schedule, not the user.
+        let currentState = (try? state.load()) ?? AgentState()
+        guard !currentState.isPaused(at: now()) else { return }
+
         let lastRuns = (try? history.lastCompletedRuns()) ?? [:]
         let decision = scheduler.decision(
             now: now(), schedules: config.schedules, lastRuns: lastRuns, activity: activity)
@@ -118,7 +129,43 @@ public actor SchedulerRunner {
     /// caller's timer.
     public func nextWakeUp() async -> Date? {
         let config = (try? configuration.load()) ?? Configuration()
-        return scheduler.nextWakeUp(now: now(), schedules: config.schedules, lastRuns: [:])
+        let scheduled = scheduler.nextWakeUp(
+            now: now(), schedules: config.schedules, lastRuns: [:])
+
+        // While paused, nothing can happen before the pause expires, so that is
+        // the next instant worth waking for — otherwise the agent would sleep
+        // through the expiry and stay dormant until something else woke it. It
+        // may wake to find nothing due yet and simply re-arm; one spare wake is
+        // cheaper than a pause that never ends on its own.
+        let currentState = (try? state.load()) ?? AgentState()
+        guard let pausedUntil = currentState.pausedUntil, now() < pausedUntil else {
+            return scheduled
+        }
+        return pausedUntil
+    }
+
+    // MARK: - Pause
+
+    /// The current pause state, for the menu bar extra and the GUI's banner.
+    public func currentState() -> AgentState {
+        (try? state.load()) ?? AgentState()
+    }
+
+    /// Suppresses scheduled backups until the given instant, or indefinitely
+    /// when `nil`. The runner owns this write because the agent is the sole
+    /// writer of `state.json`.
+    public func pause(until date: Date?) {
+        try? state.mutate { current in
+            if let date {
+                current.pause(until: date)
+            } else {
+                current.pauseIndefinitely()
+            }
+        }
+    }
+
+    public func resume() {
+        try? state.mutate { $0.resume() }
     }
 
     // MARK: - Starting

@@ -1,4 +1,5 @@
 import AppKit
+import EscapementKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -16,10 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // Escapement is a single-window app, and for now scheduling only runs while
-    // it is open, so closing the one window quits it rather than leaving an
-    // invisible process behind. (Revisit if a background agent is added that
-    // should outlive the window.)
+    // Scheduling belongs to the background agent, which outlives this process
+    // and keeps its own menu bar presence, so quitting the GUI when its window
+    // closes costs nothing: the agent goes on running the schedules and the
+    // menu bar icon is still there to prove it.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
@@ -61,29 +62,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.requestRefresh()
     }
 
-    @objc func enableBackground(_ sender: Any?) {
-        mainWindowController.enableAgent()
+    @objc func showSettings(_ sender: Any?) {
+        SettingsWindowController.shared(controller: controller).showWindow(sender)
     }
 
-    @objc func disableBackground(_ sender: Any?) {
-        mainWindowController.disableAgent()
+    @objc func pauseBackups(_ sender: NSMenuItem) {
+        guard let option = sender.representedObject as? PauseOption else { return }
+        controller.pause(option)
     }
 
-    // Show only the applicable enable/disable item, and gate the manual verbs.
+    @objc func resumeBackups(_ sender: Any?) {
+        controller.resume()
+    }
+
+    // Gate the verbs that only make sense when the agent can act on them.
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(enableBackground(_:)):
-            // Offer enable only when nothing is registered.
-            return controller.agentStatus == .notRegistered || controller.agentStatus == .notFound
-        case #selector(disableBackground(_:)):
-            // Offer disable for anything registered, including a registration
-            // still awaiting approval — otherwise there is no way to cancel it.
-            return controller.agentStatus == .enabled
-                || controller.agentStatus == .requiresApproval
         case #selector(backUpNow(_:)):
             return controller.isAgentEnabled && !controller.isBackupRunning
         case #selector(stopBackup(_:)):
             return controller.isAgentEnabled && controller.isBackupRunning
+        case #selector(pauseBackups(_:)):
+            return controller.isAgentEnabled && !controller.isPaused
+        case #selector(resumeBackups(_:)):
+            return controller.isAgentEnabled && controller.isPaused
         default:
             return true
         }
