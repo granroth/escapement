@@ -10,9 +10,9 @@ struct BackupProgressFormatterTests {
     @Test("formats copied bytes and Apple's approximate multi-day estimate")
     func bytesAndDays() {
         let progress = BackupProgress(
-            bytesCopied: 10_750_128_128,
-            timeRemaining: 452_949.0753096844)
-        #expect(formatter.detail(progress) == "10.75 GB copied — About 5 days remaining")
+            bytesCopied: 250_000_000_000,
+            timeRemaining: 432_000)
+        #expect(formatter.detail(progress) == "250 GB copied — About 5 days remaining")
     }
 
     @Test("formats either detail independently")

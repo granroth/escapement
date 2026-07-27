@@ -24,13 +24,13 @@ struct DestinationParsingTests {
 
         #expect(destinations.count == 2)
 
-        let network = try #require(destinations.first { $0.name == "Backups" })
-        #expect(network.id == "B2FFC925-13A8-46C5-9469-153616C91FA9")
-        #expect(network.kind == .network(url: "smb://user@example._smb._tcp.local./Backups"))
+        let network = try #require(destinations.first { $0.name == "Example Network Backup" })
+        #expect(network.id == "11111111-1111-1111-1111-111111111111")
+        #expect(network.kind == .network(url: "smb://user@example._smb._tcp.local./Backup"))
         #expect(network.isLastUsed == true)
 
-        let local = try #require(destinations.first { $0.name == "Time Machine 5TB" })
-        #expect(local.id == "BC2DCD93-1902-44DD-838B-814AAD1116CF")
+        let local = try #require(destinations.first { $0.name == "Example Local Backup" })
+        #expect(local.id == "22222222-2222-2222-2222-222222222222")
         #expect(local.kind == .local)
         #expect(local.isLastUsed == false)
     }
@@ -82,7 +82,7 @@ struct StatusParsingTests {
         #expect(
             activity
                 == .running(
-                    destinationID: "B2FFC925-13A8-46C5-9469-153616C91FA9",
+                    destinationID: "11111111-1111-1111-1111-111111111111",
                     phase: .mountingDiskImage, progress: nil))
     }
 
@@ -94,22 +94,24 @@ struct StatusParsingTests {
             Issue.record("expected .running, got \(activity)")
             return
         }
-        #expect(id == "BC2DCD93-1902-44DD-838B-814AAD1116CF")
+        #expect(id == "22222222-2222-2222-2222-222222222222")
         #expect(phase == .copying)
         let progress = try #require(parsedProgress)
-        #expect(abs((progress.fractionCompleted ?? 0) - 0.02497832746480003) < 0.0001)
-        #expect(progress.bytesCopied == 10_750_128_128)
-        #expect(progress.totalBytes == 2_191_954_460_672)
-        #expect(progress.filesCopied == 170)
-        #expect(progress.totalFiles == 5_451_403)
-        #expect(progress.timeRemaining == 452_949.0753096844)
+        #expect(progress.fractionCompleted == 0.25)
+        #expect(progress.bytesCopied == 250_000_000_000)
+        #expect(progress.totalBytes == 1_000_000_000_000)
+        #expect(progress.filesCopied == 250)
+        #expect(progress.totalFiles == 1_000)
+        #expect(progress.timeRemaining == 432_000)
     }
 
     @Test("the Stopping phase is its own state, not running")
     func stopping() throws {
         let activity = try TimeMachineOutputParser.activity(
             fromStatusOutput: try fixtureString("status-stopping", "txt"))
-        #expect(activity == .stopping(destinationID: "B2FFC925-13A8-46C5-9469-153616C91FA9"))
+        #expect(
+            activity
+                == .stopping(destinationID: "11111111-1111-1111-1111-111111111111"))
     }
 
     @Test("a Percent of -1 is indeterminate, never zero")

@@ -15,12 +15,12 @@ its own competing estimate.
 backup reports a nested dictionary:
 
     Progress = {
-        Percent = "0.02497832746480003";
-        TimeRemaining = "452949.0753096844";
-        bytes = 10750128128;
-        files = 170;
-        totalBytes = 2191954460672;
-        totalFiles = 5451403;
+        Percent = "0.25";
+        TimeRemaining = "432000";
+        bytes = 250000000000;
+        files = 250;
+        totalBytes = 1000000000000;
+        totalFiles = 1000;
     };
 
 Older observed output also carries `Percent` at the top level. Parse both
@@ -53,8 +53,8 @@ While copying, a destination row shows:
 
 Examples:
 
-    Copying — 2%
-    10.75 GB copied — About 5 days remaining
+    Copying — 25%
+    250 GB copied — About 5 days remaining
 
     Copying
     About 8 minutes remaining
@@ -69,8 +69,8 @@ ETA.
 
 ## Verification
 
-- Replace the synthesized Copying fixture with sanitized output captured from
-  the live “Time Machine 5TB” backup.
+- Replace the synthesized Copying fixture with a sanitized example preserving
+  the nested shape of live `tmutil status` output.
 - Test nested current output, legacy top-level percentage, absent progress,
   malformed metrics, and clamping.
 - Build and install the signed app, then verify its row against live

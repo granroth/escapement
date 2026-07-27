@@ -1,10 +1,10 @@
 # Fixtures
 
-Real `tmutil` output, captured from macOS 26.5.1, with hostnames and user
-names replaced by `example` / `user`. Nothing else has been reformatted —
-including the quoting and the `attemptOptions` key — because the parsers under
-test have to cope with exactly what `tmutil` emits, not with a tidied version
-of it.
+Representative `tmutil` output from macOS 26.5.1. Hostnames, user names,
+destination identifiers, timestamps, and backup measurements are replaced by
+obvious example values. The quoting, key names, and dictionary shapes remain
+as emitted because the parsers under test must cope with `tmutil`'s format,
+not a tidied version of it.
 
 | File | Captured from |
 | --- | --- |
@@ -20,6 +20,5 @@ Note that `status-mounting.txt` and `status-stopping.txt` both carry
 phases and must render as indeterminate; `Stopping` is distinguished from
 `MountingDiskImage` only by `BackupPhase`.
 
-`status-copying.txt` was captured during a long-running backup to a local
-destination. Its volume name was replaced with `example`; numeric values and
-the nested-only `Progress` shape are otherwise unchanged.
+`status-copying.txt` preserves the nested-only `Progress` shape observed during
+a long-running local backup while using synthetic identifiers and measurements.

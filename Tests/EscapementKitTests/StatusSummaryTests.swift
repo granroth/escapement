@@ -153,13 +153,14 @@ struct StatusSummaryTests {
                 destinationID: "D2",
                 recurrence: .daily(times: [TimeOfDay(hour: 14, minute: 0)!])!,
                 isEnabled: true, effectiveFrom: date(2026, 3, 1)))
-        let other = Destination(id: "D2", name: "Time Machine 5TB", kind: .local, isLastUsed: false)
+        let other = Destination(
+            id: "D2", name: "Example Local Backup", kind: .local, isLastUsed: false)
 
         let s = builder.summary(
             destinations: [backups, other], configuration: config, state: AgentState(),
             history: [], activity: .idle, now: date(2026, 3, 10, 12, 0))
 
-        #expect(plain(s.stateLine) == "Next backup: Time Machine 5TB at 2:00 PM")
+        #expect(plain(s.stateLine) == "Next backup: Example Local Backup at 2:00 PM")
     }
 
     @Test("a schedule for a destination that is no longer attached falls back to its id")

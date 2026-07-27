@@ -80,8 +80,8 @@ the unified log subsystem `com.apple.TimeMachine`.
 While running it reports the fields the UI needs:
 
     BackupPhase = MountingDiskImage
-    DestinationID = B2FFC925-...
-    DestinationMountPoint = /Volumes/Backups of m1
+    DestinationID = 11111111-...
+    DestinationMountPoint = /Volumes/Backups of example
     Percent = -1
     Running = 1
 

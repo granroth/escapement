@@ -2,8 +2,8 @@ Backup session status:
 {
     BackupPhase = Stopping;
     ClientID = "com.apple.backupd";
-    DateOfStateChange = "2026-07-23 16:45:17 +0000";
-    DestinationID = "B2FFC925-13A8-46C5-9469-153616C91FA9";
+    DateOfStateChange = "2026-01-15 12:00:00 +0000";
+    DestinationID = "11111111-1111-1111-1111-111111111111";
     DestinationMountPoint = "/Volumes/Backups of example";
     Percent = "-1";
     Running = 1;
