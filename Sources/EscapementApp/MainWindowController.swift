@@ -80,16 +80,19 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         split.translatesAutoresizingMaskIntoConstraints = false
         container.addChild(splitVC)
 
-        root.addSubview(banner)
-        root.addSubview(split)
+        let contentStack = NSStackView(views: [banner, split])
+        contentStack.orientation = .vertical
+        contentStack.alignment = .width
+        contentStack.spacing = 0
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            banner.topAnchor.constraint(equalTo: root.topAnchor),
-            banner.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            banner.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.topAnchor.constraint(equalTo: banner.bottomAnchor),
-            split.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            split.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            split.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: root.topAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            banner.leadingAnchor.constraint(equalTo: contentStack.leadingAnchor),
+            banner.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
         ])
         window?.contentViewController = container
         // Assigning a contentViewController resizes the window to the view's
