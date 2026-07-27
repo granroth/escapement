@@ -2,17 +2,19 @@ Backup session status:
 {
     BackupPhase = Copying;
     ClientID = "com.apple.backupd";
-    DateOfStateChange = "2026-07-23 16:47:02 +0000";
-    DestinationID = "B2FFC925-13A8-46C5-9469-153616C91FA9";
-    DestinationMountPoint = "/Volumes/Backups of example";
-    Percent = "0.4235899746418";
+    DateOfStateChange = "2026-07-26 20:02:39 +0000";
+    DestinationID = "BC2DCD93-1902-44DD-838B-814AAD1116CF";
+    DestinationMountPoint = "/Volumes/Time Machine example";
+    FractionOfProgressBar = "0.9";
     Progress =     {
-        Percent = "0.4235899746418";
-        TimeRemaining = 128;
-        bytes = 4237829120;
-        files = 51234;
-        totalBytes = 10004512768;
-        totalFiles = 121004;
+        Percent = "0.02497832746480003";
+        TimeRemaining = "452949.0753096844";
+        "_raw_Percent" = "0.02497832746480003";
+        "_raw_totalBytes" = 2191954460672;
+        bytes = 10750128128;
+        files = 170;
+        totalBytes = 2191954460672;
+        totalFiles = 5451403;
     };
     Running = 1;
     attemptOptions = 18;

@@ -251,7 +251,11 @@ final class DestinationCardView: NSTableCellView {
         summaryLabel.stringValue = row.scheduleSummary
         statusLabel.stringValue = row.statusText
         statusLabel.textColor = row.isBusy ? .controlAccentColor : .secondaryLabelColor
-        nextLabel.stringValue = row.hasSchedule ? "Next: \(row.nextRunText)" : ""
+        if row.isBusy, let detail = row.progressDetailText {
+            nextLabel.stringValue = detail
+        } else {
+            nextLabel.stringValue = row.hasSchedule ? "Next: \(row.nextRunText)" : ""
+        }
 
         if let value = row.progress {
             progress.stopAnimation(nil)

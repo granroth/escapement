@@ -89,7 +89,10 @@ struct SchedulerRunnerTests {
         let h = Harness(now: date(2026, 3, 10, 12, 0))
         defer { h.cleanup() }
         try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
-        await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: 0.5))
+        await h.fake.setActivity(
+            .running(
+                destinationID: "B", phase: .copying,
+                progress: BackupProgress(fractionCompleted: 0.5)))
 
         await h.runner.evaluate()
 
@@ -204,7 +207,10 @@ struct SchedulerRunnerTests {
     func manualWhenBusy() async throws {
         let h = Harness(now: date(2026, 3, 10, 12, 0))
         defer { h.cleanup() }
-        await h.fake.setActivity(.running(destinationID: "X", phase: .copying, progress: 0.5))
+        await h.fake.setActivity(
+            .running(
+                destinationID: "X", phase: .copying,
+                progress: BackupProgress(fractionCompleted: 0.5)))
 
         await h.runner.backUpNow(destinationID: "A")
 

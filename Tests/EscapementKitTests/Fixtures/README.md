@@ -13,17 +13,13 @@ of it.
 | `status-idle.txt` | `tmutil status` with no backup running |
 | `status-mounting.txt` | `tmutil status` during `MountingDiskImage`, before any progress is known |
 | `status-stopping.txt` | `tmutil status` after `stopbackup`, which persisted for roughly 30 seconds on a network destination |
-| `status-copying.txt` | **Synthesized**, not captured — see below |
+| `status-copying.txt` | `tmutil status` during a multi-day local backup's `Copying` phase |
 
 Note that `status-mounting.txt` and `status-stopping.txt` both carry
 `Percent = "-1"` and `Running = 1`. Progress is genuinely unknown in those
 phases and must render as indeterminate; `Stopping` is distinguished from
 `MountingDiskImage` only by `BackupPhase`.
 
-`status-copying.txt` is the one fixture not captured live: the backup used to
-probe the system was cancelled during `MountingDiskImage`, so no real
-`Copying` sample exists. It is reconstructed from tmutil's documented shape —
-a fractional top-level `Percent` plus a nested `Progress` dictionary — so the
-parser is exercised against a real percentage and against the nested block it
-must skip over without tripping. If a genuine capture is taken later, replace
-this file with it.
+`status-copying.txt` was captured during a long-running backup to a local
+destination. Its volume name was replaced with `example`; numeric values and
+the nested-only `Progress` shape are otherwise unchanged.

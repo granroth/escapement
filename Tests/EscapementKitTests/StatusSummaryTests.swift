@@ -70,7 +70,9 @@ struct StatusSummaryTests {
     func runningWins() {
         let s = summary(
             configuration: dailyConfig(hour: 3), state: pausedState(date(2026, 3, 10, 18, 0)),
-            activity: .running(destinationID: "D1", phase: .copying, progress: 0.42))
+            activity: .running(
+                destinationID: "D1", phase: .copying,
+                progress: BackupProgress(fractionCompleted: 0.42)))
 
         #expect(plain(s.stateLine) == "Copying — 42%")
         #expect(s.isRunning)

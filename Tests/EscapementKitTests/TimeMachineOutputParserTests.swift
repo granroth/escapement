@@ -90,14 +90,19 @@ struct StatusParsingTests {
     func copying() throws {
         let activity = try TimeMachineOutputParser.activity(
             fromStatusOutput: try fixtureString("status-copying", "txt"))
-        guard case .running(let id, let phase, let progress) = activity else {
+        guard case .running(let id, let phase, let parsedProgress) = activity else {
             Issue.record("expected .running, got \(activity)")
             return
         }
-        #expect(id == "B2FFC925-13A8-46C5-9469-153616C91FA9")
+        #expect(id == "BC2DCD93-1902-44DD-838B-814AAD1116CF")
         #expect(phase == .copying)
-        #expect(progress != nil)
-        #expect(abs((progress ?? 0) - 0.4235899746418) < 0.0001)
+        let progress = try #require(parsedProgress)
+        #expect(abs((progress.fractionCompleted ?? 0) - 0.02497832746480003) < 0.0001)
+        #expect(progress.bytesCopied == 10_750_128_128)
+        #expect(progress.totalBytes == 2_191_954_460_672)
+        #expect(progress.filesCopied == 170)
+        #expect(progress.totalFiles == 5_451_403)
+        #expect(progress.timeRemaining == 452_949.0753096844)
     }
 
     @Test("the Stopping phase is its own state, not running")
@@ -156,7 +161,79 @@ struct StatusParsingTests {
             Issue.record("expected .running")
             return
         }
-        #expect(progress == 1.0)
+        #expect(progress?.fractionCompleted == 1.0)
+    }
+
+    @Test("an invalid nested fraction falls back to a valid legacy fraction")
+    func invalidNestedFractionFallsBack() throws {
+        let output = """
+            Backup session status:
+            {
+                BackupPhase = Copying;
+                DestinationID = "ABC";
+                Percent = "0.25";
+                Progress = {
+                    Percent = nan;
+                    TimeRemaining = "-1";
+                    bytes = "-20";
+                    files = nope;
+                };
+                Running = 1;
+            }
+            """
+        let activity = try TimeMachineOutputParser.activity(fromStatusOutput: output)
+        guard case .running(_, _, let progress) = activity else {
+            Issue.record("expected .running")
+            return
+        }
+        #expect(progress?.fractionCompleted == 0.25)
+        #expect(progress?.bytesCopied == nil)
+        #expect(progress?.filesCopied == nil)
+        #expect(progress?.timeRemaining == nil)
+    }
+
+    @Test("a valid nested fraction takes precedence over the legacy top-level value")
+    func nestedFractionTakesPrecedence() throws {
+        let output = """
+            Backup session status:
+            {
+                BackupPhase = Copying;
+                DestinationID = "ABC";
+                Percent = "0.9";
+                Progress = { Percent = "0.2"; };
+                Running = 1;
+            }
+            """
+        let activity = try TimeMachineOutputParser.activity(fromStatusOutput: output)
+        guard case .running(_, _, let progress) = activity else {
+            Issue.record("expected .running")
+            return
+        }
+        #expect(progress?.fractionCompleted == 0.2)
+    }
+
+    @Test("a wholly invalid nested progress dictionary is indeterminate")
+    func invalidNestedProgressIsNil() throws {
+        let output = """
+            Backup session status:
+            {
+                BackupPhase = Copying;
+                DestinationID = "ABC";
+                Progress = {
+                    Percent = "-1";
+                    TimeRemaining = infinity;
+                    bytes = "-20";
+                    totalBytes = nope;
+                    files = "-1";
+                    totalFiles = nope;
+                };
+                Running = 1;
+            }
+            """
+        let activity = try TimeMachineOutputParser.activity(fromStatusOutput: output)
+        #expect(
+            activity
+                == .running(destinationID: "ABC", phase: .copying, progress: nil))
     }
 
     @Test("output without a dictionary is rejected")

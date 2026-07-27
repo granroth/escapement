@@ -35,7 +35,8 @@ actor FakeTimeMachine: TimeMachineControlling {
         startCalls.append(destinationID)
         if autoBecomeRunning {
             currentActivity = .running(
-                destinationID: destinationID, phase: .copying, progress: 0.1)
+                destinationID: destinationID, phase: .copying,
+                progress: BackupProgress(fractionCompleted: 0.1))
         }
     }
 

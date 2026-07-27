@@ -60,7 +60,9 @@ public struct StatusSummaryBuilder: Sendable {
         // even while paused — a manual run is allowed during a pause.
         switch activity {
         case .running(_, let phase, let progress):
-            if let progress { return "\(phase.displayName) — \(Int(progress * 100))%" }
+            if let fraction = progress?.fractionCompleted {
+                return "\(phase.displayName) — \(Int(fraction * 100))%"
+            }
             return phase.displayName
         case .stopping:
             return "Stopping…"

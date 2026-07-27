@@ -80,7 +80,7 @@ public enum TimeMachineOutputParser {
         return .running(
             destinationID: destinationID,
             phase: phase,
-            progress: progress(from: string(dict["Percent"])))
+            progress: progress(from: dict))
     }
 
     // MARK: - Helpers
@@ -103,11 +103,33 @@ public enum TimeMachineOutputParser {
         }
     }
 
-    /// `tmutil` reports `-1` while progress is genuinely unknown; that must
-    /// become `nil` (indeterminate), never `0`. A known fraction is clamped
-    /// into `0...1` against out-of-range noise.
-    private static func progress(from percent: String?) -> Double? {
-        guard let percent, let value = Double(percent), value >= 0 else { return nil }
-        return min(max(value, 0), 1)
+    /// Current `tmutil` nests progress; older output also placed `Percent` at
+    /// the top level. Prefer a valid nested fraction but preserve that fallback.
+    private static func progress(from status: [String: Any]) -> BackupProgress? {
+        let nested = status["Progress"] as? [String: Any]
+        let fraction = nonnegativeDouble(nested?["Percent"])
+            ?? nonnegativeDouble(status["Percent"])
+        let progress = BackupProgress(
+            fractionCompleted: fraction,
+            bytesCopied: nonnegativeInteger(nested?["bytes"]),
+            totalBytes: nonnegativeInteger(nested?["totalBytes"]),
+            filesCopied: nonnegativeInteger(nested?["files"]),
+            totalFiles: nonnegativeInteger(nested?["totalFiles"]),
+            timeRemaining: nonnegativeDouble(nested?["TimeRemaining"]))
+        return progress.isEmpty ? nil : progress
+    }
+
+    private static func nonnegativeDouble(_ value: Any?) -> Double? {
+        guard let text = string(value), let result = Double(text),
+            result.isFinite, result >= 0
+        else { return nil }
+        return result
+    }
+
+    private static func nonnegativeInteger(_ value: Any?) -> Int64? {
+        guard let text = string(value), let result = Int64(text), result >= 0 else {
+            return nil
+        }
+        return result
     }
 }

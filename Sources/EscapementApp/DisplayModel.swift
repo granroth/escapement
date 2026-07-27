@@ -11,6 +11,7 @@ struct DestinationRow {
     let scheduleSummary: String
     let statusText: String
     let progress: Double?
+    let progressDetailText: String?
     let isBusy: Bool
     let lastRunText: String
     let nextRunText: String
@@ -42,6 +43,8 @@ struct RowBuilder {
                 scheduleSummary: scheduleSummary(schedule),
                 statusText: statusText(for: destination.id, activity: activity),
                 progress: progress(for: destination.id, activity: activity),
+                progressDetailText: progressDetailText(
+                    for: destination.id, activity: activity),
                 isBusy: isBusy(for: destination.id, activity: activity),
                 lastRunText: lastRunText(for: destination.id, history: history, now: now),
                 nextRunText: nextRunText(schedule, now: now))
@@ -60,8 +63,8 @@ struct RowBuilder {
             return "Idle"
         case .running(let destinationID, let phase, let progress):
             guard destinationID == nil || destinationID == id else { return "Idle" }
-            if let progress {
-                return "\(phase.displayName) — \(Int(progress * 100))%"
+            if let fraction = progress?.fractionCompleted {
+                return "\(phase.displayName) — \(Int(fraction * 100))%"
             }
             return phase.displayName
         case .stopping(let destinationID):
@@ -74,9 +77,17 @@ struct RowBuilder {
         if case .running(let destinationID, _, let progress) = activity,
             destinationID == nil || destinationID == id
         {
-            return progress
+            return progress?.fractionCompleted
         }
         return nil
+    }
+
+    private func progressDetailText(for id: String, activity: BackupActivity) -> String? {
+        guard case .running(let destinationID, _, let progress) = activity,
+            destinationID == nil || destinationID == id,
+            let progress
+        else { return nil }
+        return BackupProgressFormatter(locale: locale).detail(progress)
     }
 
     private func isBusy(for id: String, activity: BackupActivity) -> Bool {

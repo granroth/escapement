@@ -37,7 +37,9 @@ struct SchedulerDecisionTests {
             now: date(2026, 3, 10, 12, 0),
             schedules: [s],
             lastRuns: [:],
-            activity: .running(destinationID: "A", phase: .copying, progress: 0.5))
+            activity: .running(
+                destinationID: "A", phase: .copying,
+                progress: BackupProgress(fractionCompleted: 0.5)))
         #expect(decision == .idle)
     }
 
