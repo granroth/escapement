@@ -104,13 +104,39 @@ public struct HistoryStore: Sendable {
     }
 
     /// The most recent completed run per destination, for the scheduler's
-    /// last-run reference. Only `.completed` runs count: a failed or cancelled
-    /// attempt did not back anything up, so it must not suppress the next
-    /// scheduled attempt.
+    /// last-run reference. Only `.completed` runs count: a failed, cancelled,
+    /// or skipped attempt did not back anything up, so it must not suppress
+    /// the next scheduled attempt.
     public func lastCompletedRuns() throws -> [String: Date] {
+        Self.lastCompleted(in: try load())
+    }
+
+    /// The most recent *attempt* per destination, for fairness ordering
+    /// between destinations that are both due. Every outcome counts except
+    /// `.skipped` — a skipped occurrence made no attempt, so it must not cost
+    /// the destination its place in the rotation.
+    public func mostRecentAttempts() throws -> [String: Date] {
+        Self.mostRecentAttempts(in: try load())
+    }
+
+    /// Pure form of `lastCompletedRuns()`, for callers that already hold a
+    /// loaded run list and want to avoid a second read within one tick.
+    static func lastCompleted(in runs: [BackupRun]) -> [String: Date] {
         var result: [String: Date] = [:]
-        for run in try load() where run.outcome == .completed {
+        for run in runs where run.outcome == .completed {
             let when = run.finishedAt ?? run.startedAt
+            if let existing = result[run.destinationID], existing >= when { continue }
+            result[run.destinationID] = when
+        }
+        return result
+    }
+
+    /// Pure form of `mostRecentAttempts()`, for the same reason.
+    static func mostRecentAttempts(in runs: [BackupRun]) -> [String: Date] {
+        var result: [String: Date] = [:]
+        for run in runs {
+            if case .skipped = run.outcome { continue }
+            let when = run.startedAt
             if let existing = result[run.destinationID], existing >= when { continue }
             result[run.destinationID] = when
         }

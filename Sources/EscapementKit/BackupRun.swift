@@ -19,6 +19,12 @@ public struct BackupRun: Codable, Hashable, Sendable, Identifiable {
         /// known.
         case failed(reason: String?)
         case cancelled
+        /// A due occurrence that could not be started this tick — the slot
+        /// was held by another destination, or a retry cooldown was in
+        /// effect. `startedAt` is the occurrence that was skipped, not an
+        /// actual attempt, so this must not advance a last-run reference or
+        /// count toward fairness ordering.
+        case skipped(reason: String?)
     }
 
     public let id: UUID

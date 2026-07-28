@@ -29,7 +29,11 @@ private struct Harness {
     let runner: SchedulerRunner
     private let dir: URL
 
-    init(now: Date) {
+    init(
+        now: Date,
+        maxRetryCooldown: TimeInterval = 12 * 60 * 60,
+        stallTimeout: TimeInterval = 2 * 60 * 60
+    ) {
         clock = TestClock(now)
         dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("escapement-runner-\(UUID().uuidString)", isDirectory: true)
@@ -42,7 +46,9 @@ private struct Harness {
             history: history,
             state: state,
             scheduler: Scheduler(calendar: calendar()),
-            now: clock.now)
+            now: clock.now,
+            maxRetryCooldown: maxRetryCooldown,
+            stallTimeout: stallTimeout)
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: dir) }
@@ -97,7 +103,15 @@ struct SchedulerRunnerTests {
         await h.runner.evaluate()
 
         #expect(await h.fake.startCalls.isEmpty)
-        #expect(try h.history.load().isEmpty)
+        // The due occurrence is recorded as skipped rather than silently
+        // dropped — a busy slot must leave a trace in the Activity Log.
+        let runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].destinationID == "A")
+        if case .skipped = runs[0].outcome {
+        } else {
+            Issue.record("expected .skipped, got \(runs[0].outcome)")
+        }
     }
 
     @Test("closes a run as completed once the backup is observed then stops")
@@ -301,6 +315,270 @@ struct SchedulerRunnerTests {
 
         // Pausing must not strand history: bookkeeping continues regardless.
         #expect(isFailed(try h.history.load()[0].outcome))
+    }
+
+    // MARK: - Fairness
+
+    @Test("fairness ordering survives a restart because it is derived from history, not memory")
+    func fairnessSurvivesRestart() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        // A has never completed, so its due occurrence (from effectiveFrom) is
+        // far more overdue than B's. A previous process attempted A recently
+        // and failed; that attempt lives only in history, not in this
+        // runner's in-memory state, as it would after a restart. B has not
+        // been attempted since it completed a week ago.
+        try h.setDaily("A", at: 3, from: date(2026, 3, 1, 12, 0))
+        try h.setDaily("B", at: 3, from: date(2026, 3, 1, 12, 0))
+        try h.history.append(
+            BackupRun(
+                destinationID: "A", trigger: .scheduled,
+                startedAt: date(2026, 3, 10, 2, 0),
+                finishedAt: date(2026, 3, 10, 2, 5),
+                outcome: .failed(reason: "stalled")))
+        try h.history.append(
+            BackupRun(
+                destinationID: "B", trigger: .scheduled,
+                startedAt: date(2026, 3, 3, 3, 0),
+                finishedAt: date(2026, 3, 3, 3, 5),
+                outcome: .completed))
+
+        await h.runner.evaluate()
+
+        #expect(await h.fake.startCalls == ["B"])
+    }
+
+    // MARK: - Stall watchdog
+
+    @Test("a run that stops progressing past the stall timeout is stopped and marked stalled")
+    func stallWatchdogStopsAStuckRun() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1), stallTimeout: 3600)
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setAutoBecomeRunning(true)
+
+        await h.runner.evaluate()  // starts; fake flips to running
+        await h.runner.evaluate()  // observes running, records the baseline snapshot
+
+        h.clock.advance(by: 3700)  // past the stall timeout with no change at all
+        await h.runner.evaluate()
+
+        #expect(await h.fake.stopCalls == 1)
+        let run = try h.history.load()[0]
+        #expect(isFailed(run.outcome))
+        if case .failed(let reason) = run.outcome {
+            #expect(reason == "stalled")
+        }
+    }
+
+    @Test("byte or file movement resets the stall clock even without a phase change")
+    func progressChangeResetsStallClock() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1), stallTimeout: 3600)
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setAutoBecomeRunning(true)
+
+        await h.runner.evaluate()  // starts
+        await h.runner.evaluate()  // baseline recorded
+
+        h.clock.advance(by: 3000)  // within the timeout
+        await h.fake.setActivity(
+            .running(
+                destinationID: "A", phase: .copying,
+                progress: BackupProgress(fractionCompleted: 0.2, bytesCopied: 500)))
+        await h.runner.evaluate()  // progress changed -> resets the baseline
+
+        h.clock.advance(by: 3000)  // 6000s since start, but only 3000s since the reset
+        await h.runner.evaluate()
+
+        #expect(await h.fake.stopCalls == 0)
+        #expect(try h.history.load()[0].outcome == .running)
+    }
+
+    @Test("a phase change alone counts as progress even without byte movement")
+    func phaseChangeAloneCountsAsProgress() async throws {
+        // Guards against a false positive during a legitimate phase like
+        // Thinning that reports no byte movement of its own.
+        let h = Harness(now: date(2026, 3, 10, 3, 1), stallTimeout: 3600)
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setAutoBecomeRunning(true)
+
+        await h.runner.evaluate()  // starts
+        await h.runner.evaluate()  // baseline recorded
+
+        h.clock.advance(by: 3000)
+        await h.fake.setActivity(.running(destinationID: "A", phase: .thinning, progress: nil))
+        await h.runner.evaluate()  // phase changed -> resets the baseline
+
+        h.clock.advance(by: 3000)
+        await h.runner.evaluate()
+
+        #expect(await h.fake.stopCalls == 0)
+        #expect(try h.history.load()[0].outcome == .running)
+    }
+
+    // MARK: - Backoff
+
+    @Test("consecutive non-completing attempts lengthen the retry cooldown exponentially")
+    func backoffLengthensCooldownExponentially() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+
+        // Attempt 1 fails.
+        await h.runner.evaluate()
+        h.clock.advance(by: 600)
+        await h.runner.evaluate()  // closes failed #1
+        #expect(await h.fake.startCalls.count == 1)
+
+        // The base cooldown (900s) has elapsed since attempt 1 started;
+        // attempt 2 begins and also fails.
+        h.clock.advance(by: 400)  // 1000s since attempt 1's start
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls.count == 2)
+        h.clock.advance(by: 600)
+        await h.runner.evaluate()  // closes failed #2
+
+        // Two consecutive failures require 2x the base cooldown (1800s), not
+        // the flat 900s that a single failure would.
+        h.clock.advance(by: 900)  // 900s since attempt 2's start: still short
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls.count == 2)
+
+        h.clock.advance(by: 901)  // 1801s since attempt 2's start: enough
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls.count == 3)
+    }
+
+    @Test("a completed run resets the consecutive-failure count")
+    func completionResetsBackoff() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+
+        // Attempt 1 fails.
+        await h.runner.evaluate()
+        h.clock.advance(by: 600)
+        await h.runner.evaluate()
+
+        // Attempt 2, after the base cooldown, succeeds.
+        h.clock.advance(by: 901)
+        await h.fake.setAutoBecomeRunning(true)
+        await h.runner.evaluate()
+        await h.runner.evaluate()
+        await h.fake.setActivity(.idle)
+        h.clock.advance(by: 60)
+        await h.runner.evaluate()
+        #expect(
+            try h.history.load().first(where: { $0.destinationID == "A" })?.outcome == .completed)
+
+        // A day later the schedule is due again; attempt 3 fails. If the
+        // failure streak had not reset, two in a row would demand 1800s —
+        // confirm the base 900s is sufficient instead.
+        h.clock.advance(by: 24 * 60 * 60)
+        await h.fake.setAutoBecomeRunning(false)
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // starts attempt 3
+        h.clock.advance(by: 600)
+        await h.runner.evaluate()  // closes failed
+
+        h.clock.advance(by: 901)  // base cooldown only
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls.count == 4)
+    }
+
+    // MARK: - Skipped occurrences
+
+    @Test("a due destination blocked by a busy slot is recorded once as skipped, not once per tick")
+    func skippedRecordedOncePerOccurrence() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: nil))
+
+        await h.runner.evaluate()
+        h.clock.advance(by: 60)
+        await h.runner.evaluate()
+        h.clock.advance(by: 60)
+        await h.runner.evaluate()
+
+        let skipped = try h.history.load().filter {
+            if case .skipped = $0.outcome { return true }
+            return false
+        }
+        #expect(skipped.count == 1)
+        #expect(skipped[0].destinationID == "A")
+    }
+
+    @Test("the destination that starts is not itself recorded as skipped")
+    func startedDestinationNotRecordedSkipped() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+
+        await h.runner.evaluate()
+
+        let skipped = try h.history.load().filter {
+            if case .skipped = $0.outcome { return true }
+            return false
+        }
+        #expect(skipped.isEmpty)
+    }
+
+    // MARK: - Waiting state
+
+    @Test("AgentState.waiting is set while a due backup is blocked and cleared once one starts")
+    func waitingStateReflectsBlocking() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: nil))
+
+        await h.runner.evaluate()
+
+        let waiting = try h.state.load().waiting
+        #expect(waiting?.blockedDestinationID == "A")
+        #expect(waiting?.holderDestinationID == "B")
+
+        await h.fake.setActivity(.idle)
+        h.clock.advance(by: 10)
+        await h.runner.evaluate()
+
+        #expect(try h.state.load().waiting == nil)
+    }
+
+    @Test("waiting.since is set once and does not reset on every blocked tick")
+    func waitingSincePersistsAcrossTicks() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: nil))
+
+        await h.runner.evaluate()
+        let firstSince = try h.state.load().waiting?.since
+
+        h.clock.advance(by: 120)
+        await h.runner.evaluate()
+        let secondSince = try h.state.load().waiting?.since
+
+        #expect(firstSince != nil)
+        #expect(firstSince == secondSince)
+    }
+
+    @Test("waiting during a retry cooldown reports no holder — the slot is genuinely idle")
+    func waitingDuringCooldownHasNoHolder() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+
+        await h.runner.evaluate()
+        h.clock.advance(by: 600)
+        await h.runner.evaluate()  // closes failed, still within cooldown -> blocked
+
+        let waiting = try h.state.load().waiting
+        #expect(waiting?.blockedDestinationID == "A")
+        #expect(waiting?.holderDestinationID == nil)
     }
 
     @Test("nextWakeUp returns the pause expiry so the agent resumes on its own")

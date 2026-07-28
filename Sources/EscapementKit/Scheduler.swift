@@ -24,29 +24,78 @@ public struct Scheduler: Sendable {
     ///   - now: the current instant.
     ///   - schedules: the configured schedules.
     ///   - lastRuns: the last completed run per destination id.
+    ///   - lastAttempts: the last *attempted* run per destination id — every
+    ///     outcome except a skipped occurrence — used to order between
+    ///     several due destinations. A destination absent from this map is
+    ///     treated as never attempted.
     ///   - activity: what backupd is doing right now.
     public func decision(
         now: Date,
         schedules: [DestinationSchedule],
         lastRuns: [String: Date],
+        lastAttempts: [String: Date] = [:],
         activity: BackupActivity
     ) -> SchedulerDecision {
         // Rule 1: one backup at a time. Anything but idle means wait.
         guard activity == .idle else { return .idle }
 
-        // The most overdue due schedule wins; configuration order breaks ties
-        // because `min(by:)` keeps the earlier element on equal keys.
-        let mostOverdue = schedules
-            .compactMap { schedule -> (schedule: DestinationSchedule, due: Date)? in
+        guard
+            let winner = fairestDue(
+                now: now, schedules: schedules, lastRuns: lastRuns, lastAttempts: lastAttempts)
+        else { return .idle }
+        return .start(destinationID: winner.destinationID)
+    }
+
+    /// The due schedule that has waited longest since its last attempt —
+    /// least-recently-attempted wins, not most-overdue. A destination that
+    /// never completes stays due forever, so ordering by overdue-ness alone
+    /// lets it monopolise the slot: it is always the most overdue schedule,
+    /// so it reclaims the slot the instant it is free, ahead of destinations
+    /// it has been starving. Ordering by last attempt instead means an
+    /// attempt — successful or not — costs a destination its priority, so a
+    /// failing destination cycles through the rotation rather than owning it.
+    ///
+    /// Ties break on the earlier due occurrence, then configuration order,
+    /// preserving the original ordering when no destination has an attempt
+    /// history — `min(by:)` keeps the earlier element on equal keys.
+    private func fairestDue(
+        now: Date,
+        schedules: [DestinationSchedule],
+        lastRuns: [String: Date],
+        lastAttempts: [String: Date]
+    ) -> (destinationID: String, due: Date)? {
+        schedules
+            .compactMap { schedule -> (destinationID: String, due: Date)? in
                 guard let due = dueOccurrence(for: schedule, now: now, lastRuns: lastRuns) else {
                     return nil
                 }
-                return (schedule, due)
+                return (schedule.destinationID, due)
             }
-            .min { $0.due < $1.due }
+            .min { a, b in
+                let attemptA = lastAttempts[a.destinationID] ?? .distantPast
+                let attemptB = lastAttempts[b.destinationID] ?? .distantPast
+                if attemptA != attemptB { return attemptA < attemptB }
+                return a.due < b.due
+            }
+    }
 
-        guard let winner = mostOverdue else { return .idle }
-        return .start(destinationID: winner.schedule.destinationID)
+    /// Every schedule that is due right now, independent of whether a backup
+    /// can actually start. `SchedulerRunner` uses this to see past rule 1's
+    /// single verdict: a due destination that is not `decision`'s winner —
+    /// because rule 1 gave the slot to another destination, or because that
+    /// winner's own retry cooldown deferred it — is recorded as skipped in
+    /// history, or surfaced as the live waiting reason, or both.
+    public func dueSchedules(
+        now: Date,
+        schedules: [DestinationSchedule],
+        lastRuns: [String: Date]
+    ) -> [(destinationID: String, occurrence: Date)] {
+        schedules.compactMap { schedule in
+            guard let due = dueOccurrence(for: schedule, now: now, lastRuns: lastRuns) else {
+                return nil
+            }
+            return (schedule.destinationID, due)
+        }
     }
 
     /// The earliest strictly-future occurrence across all enabled schedules,

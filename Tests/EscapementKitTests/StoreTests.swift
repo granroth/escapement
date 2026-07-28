@@ -142,4 +142,37 @@ struct HistoryStoreTests {
         #expect(last["A"]?.timeIntervalSince1970 == 560)
         #expect(last["B"]?.timeIntervalSince1970 == 360)
     }
+
+    @Test("mostRecentAttempts keeps the latest start per destination regardless of outcome")
+    func mostRecentAttemptsAcrossOutcomes() throws {
+        let tmp = TempDir()
+        let store = HistoryStore(url: tmp.file("history.json"))
+        try store.append(run("A", Date(timeIntervalSince1970: 100), outcome: .completed))
+        try store.append(
+            run("A", Date(timeIntervalSince1970: 300), outcome: .failed(reason: "unreachable")))
+        let attempts = try store.mostRecentAttempts()
+        // Unlike lastCompletedRuns, a later *failed* attempt still counts: a
+        // destination that just failed should not look like it hasn't been
+        // tried in a while.
+        #expect(attempts["A"]?.timeIntervalSince1970 == 300)
+    }
+
+    @Test("mostRecentAttempts ignores skipped occurrences — no attempt was made")
+    func mostRecentAttemptsIgnoresSkipped() throws {
+        let tmp = TempDir()
+        let store = HistoryStore(url: tmp.file("history.json"))
+        try store.append(run("A", Date(timeIntervalSince1970: 100), outcome: .completed))
+        try store.append(run("A", Date(timeIntervalSince1970: 900), outcome: .skipped(reason: nil)))
+        let attempts = try store.mostRecentAttempts()
+        #expect(attempts["A"]?.timeIntervalSince1970 == 100)
+    }
+
+    @Test("lastCompletedRuns ignores skipped occurrences")
+    func lastCompletedIgnoresSkipped() throws {
+        let tmp = TempDir()
+        let store = HistoryStore(url: tmp.file("history.json"))
+        try store.append(run("A", Date(timeIntervalSince1970: 900), outcome: .skipped(reason: nil)))
+        let last = try store.lastCompletedRuns()
+        #expect(last["A"] == nil)
+    }
 }

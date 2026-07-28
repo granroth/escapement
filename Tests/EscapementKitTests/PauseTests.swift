@@ -117,4 +117,50 @@ struct PauseTests {
         let config = try JSONDecoder().decode(AgentState.self, from: Data(json.utf8))
         #expect(config.pausedUntil == nil)
     }
+
+    // MARK: - Waiting
+
+    @Test("a fresh state has no waiting reason")
+    func freshHasNoWaiting() {
+        #expect(AgentState().waiting == nil)
+    }
+
+    @Test("setWaiting records and clears the blocked and holder destinations")
+    func setWaitingRecordsAndClears() {
+        var state = AgentState()
+        let since = date(2026, 3, 10, 10, 0)
+        state.setWaiting(
+            AgentState.Waiting(blockedDestinationID: "A", holderDestinationID: "B", since: since))
+
+        #expect(state.waiting?.blockedDestinationID == "A")
+        #expect(state.waiting?.holderDestinationID == "B")
+        #expect(state.waiting?.since == since)
+
+        state.setWaiting(nil)
+        #expect(state.waiting == nil)
+    }
+
+    @Test("a state file predating the waiting field decodes with no waiting reason")
+    func decodesWithoutWaitingKey() throws {
+        let json = #"{}"#
+        let state = try JSONDecoder().decode(AgentState.self, from: Data(json.utf8))
+        #expect(state.waiting == nil)
+    }
+
+    @Test("waiting survives a round trip through the real store")
+    func waitingRoundTrips() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("escapement-state-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = StateStore(url: url)
+
+        var state = AgentState()
+        state.setWaiting(
+            AgentState.Waiting(
+                blockedDestinationID: "A", holderDestinationID: "B",
+                since: date(2026, 3, 10, 10, 0)))
+        try store.save(state)
+
+        #expect(try store.load().waiting == state.waiting)
+    }
 }

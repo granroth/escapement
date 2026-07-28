@@ -100,10 +100,15 @@ struct RowBuilder {
 
     private func lastRunText(for id: String, history: [BackupRun], now: Date) -> String {
         // The "last run" is the most recent *finished* attempt; an in-progress
-        // one is conveyed by the status column, not here.
+        // one is conveyed by the status column, not here, and a skipped
+        // occurrence never ran at all.
         guard
             let run = history.first(where: {
-                $0.destinationID == id && $0.outcome != .running
+                guard $0.destinationID == id else { return false }
+                switch $0.outcome {
+                case .running, .skipped: return false
+                case .completed, .failed, .cancelled: return true
+                }
             })
         else { return "Never" }
         let when = run.finishedAt ?? run.startedAt
@@ -114,6 +119,7 @@ struct RowBuilder {
         case .completed, .running: return ago
         case .cancelled: return "Cancelled \(ago)"
         case .failed: return "Failed \(ago)"
+        case .skipped: return "Skipped \(ago)"
         }
     }
 

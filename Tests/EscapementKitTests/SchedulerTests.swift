@@ -130,11 +130,93 @@ struct SchedulerDecisionTests {
         #expect(decision == .start(destinationID: "A"))
     }
 
+    @Test(
+        "the least recently attempted destination wins even when it is less overdue by occurrence"
+    )
+    func leastRecentlyAttemptedWinsOverMostOverdue() {
+        // A has never completed, so its reference stays at effectiveFrom and
+        // its due occurrence (day 1) is far more overdue than B's (day 9).
+        // But A was attempted (and failed) ten minutes ago, while B has not
+        // been attempted since it last completed a week ago — B should get
+        // the slot, not the destination that keeps consuming it and failing.
+        let a = dailySchedule("A", at: 3, from: date(2026, 3, 1, 12, 0))
+        let b = dailySchedule("B", at: 3, from: date(2026, 3, 1, 12, 0))
+        let now = date(2026, 3, 10, 12, 0)
+        let decision = scheduler.decision(
+            now: now,
+            schedules: [a, b],
+            lastRuns: ["B": date(2026, 3, 8, 3, 0)],
+            lastAttempts: [
+                "A": now.addingTimeInterval(-600),
+                "B": date(2026, 3, 8, 3, 0),
+            ],
+            activity: .idle)
+        #expect(decision == .start(destinationID: "B"))
+    }
+
+    @Test("when attempts tie, the more overdue occurrence wins")
+    func attemptTieFallsBackToOccurrence() {
+        let a = dailySchedule("A", at: 5, from: date(2026, 3, 1))
+        let b = dailySchedule("B", at: 1, from: date(2026, 3, 1))
+        let decision = scheduler.decision(
+            now: date(2026, 3, 10, 6, 0),
+            schedules: [a, b],
+            lastRuns: [:],
+            lastAttempts: ["A": date(2026, 3, 1), "B": date(2026, 3, 1)],
+            activity: .idle)
+        #expect(decision == .start(destinationID: "B"))
+    }
+
+    @Test("a destination with no recorded attempt is treated as never attempted")
+    func missingAttemptIsDistantPast() {
+        let a = dailySchedule("A", at: 3, from: date(2026, 3, 1, 12, 0))
+        let b = dailySchedule("B", at: 3, from: date(2026, 3, 1, 12, 0))
+        let now = date(2026, 3, 10, 12, 0)
+        // A was attempted recently; B has no entry at all, so it must win.
+        let decision = scheduler.decision(
+            now: now,
+            schedules: [a, b],
+            lastRuns: [:],
+            lastAttempts: ["A": now.addingTimeInterval(-60)],
+            activity: .idle)
+        #expect(decision == .start(destinationID: "B"))
+    }
+
     @Test("no schedules means idle")
     func noSchedules() {
         #expect(
             scheduler.decision(
                 now: date(2026, 3, 10), schedules: [], lastRuns: [:], activity: .idle) == .idle)
+    }
+}
+
+@Suite("Scheduler due schedules")
+struct SchedulerDueSchedulesTests {
+    private let scheduler = Scheduler(calendar: calendar())
+
+    @Test("reports every due destination, independent of activity")
+    func reportsAllDue() {
+        let a = dailySchedule("A", at: 5, from: date(2026, 3, 1))
+        let b = dailySchedule("B", at: 1, from: date(2026, 3, 1))
+        let due = scheduler.dueSchedules(
+            now: date(2026, 3, 10, 6, 0), schedules: [a, b], lastRuns: [:])
+        #expect(Set(due.map(\.destinationID)) == ["A", "B"])
+    }
+
+    @Test("omits schedules that are not yet due")
+    func omitsNotYetDue() {
+        let a = dailySchedule("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        let due = scheduler.dueSchedules(
+            now: date(2026, 3, 10, 2, 0), schedules: [a], lastRuns: [:])
+        #expect(due.isEmpty)
+    }
+
+    @Test("omits disabled schedules")
+    func omitsDisabled() {
+        let a = dailySchedule("A", at: 3, enabled: false, from: date(2026, 3, 1))
+        let due = scheduler.dueSchedules(
+            now: date(2026, 3, 10, 12, 0), schedules: [a], lastRuns: [:])
+        #expect(due.isEmpty)
     }
 }
 

@@ -20,8 +20,32 @@ public struct AgentState: Codable, Hashable, Sendable {
     /// hours". Persisting it means a pause survives restart and login.
     public private(set) var pausedUntil: Date?
 
-    public init(pausedUntil: Date? = nil) {
+    /// Set while a due schedule cannot start because another destination
+    /// holds the slot or a retry cooldown is in effect, and cleared the
+    /// instant something starts. Without this a starved schedule is
+    /// indistinguishable from a dead agent: a blocked tick otherwise leaves
+    /// no trace anywhere the GUI can read.
+    public private(set) var waiting: Waiting?
+
+    /// One destination the scheduler could not start this tick, and — when
+    /// known — the destination currently holding the slot.
+    public struct Waiting: Codable, Hashable, Sendable {
+        public let blockedDestinationID: String?
+        public let holderDestinationID: String?
+        /// When this destination first became blocked, so the UI can show
+        /// "waiting since 10:00" rather than resetting every tick.
+        public let since: Date
+
+        public init(blockedDestinationID: String?, holderDestinationID: String?, since: Date) {
+            self.blockedDestinationID = blockedDestinationID
+            self.holderDestinationID = holderDestinationID
+            self.since = since
+        }
+    }
+
+    public init(pausedUntil: Date? = nil, waiting: Waiting? = nil) {
         self.pausedUntil = pausedUntil
+        self.waiting = waiting
     }
 
     /// Whether scheduled backups are suppressed at the given instant.
@@ -49,5 +73,9 @@ public struct AgentState: Codable, Hashable, Sendable {
 
     public mutating func resume() {
         pausedUntil = nil
+    }
+
+    public mutating func setWaiting(_ waiting: Waiting?) {
+        self.waiting = waiting
     }
 }

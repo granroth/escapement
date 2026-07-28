@@ -108,9 +108,15 @@ public struct StatusSummaryBuilder: Sendable {
     // MARK: - Latest
 
     private func latestLine(history: [BackupRun], now: Date) -> String {
-        // An in-progress run is reported by the state line, not here, so only
-        // finished attempts count.
-        let finished = history.filter { $0.outcome != .running }
+        // An in-progress run is reported by the state line, not here, and a
+        // skipped occurrence never ran at all, so only finished attempts
+        // that actually happened count.
+        let finished = history.filter {
+            switch $0.outcome {
+            case .running, .skipped: return false
+            case .completed, .failed, .cancelled: return true
+            }
+        }
         guard
             let latest = finished.max(by: {
                 ($0.finishedAt ?? $0.startedAt) < ($1.finishedAt ?? $1.startedAt)
@@ -125,6 +131,9 @@ public struct StatusSummaryBuilder: Sendable {
             return "Latest backup: failed \(when)"
         case .cancelled:
             return "Latest backup: cancelled \(when)"
+        case .skipped:
+            // Excluded by the filter above; kept only for exhaustiveness.
+            return "Latest backup: \(when)"
         }
     }
 

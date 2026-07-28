@@ -89,6 +89,7 @@ final class LogWindowController: NSWindowController, NSTableViewDataSource {
             case .completed: return "Completed"
             case .cancelled: return "Cancelled"
             case .failed(let reason): return reason.map { "Failed: \($0)" } ?? "Failed"
+            case .skipped(let reason): return reason.map { "Skipped: \($0)" } ?? "Skipped"
             }
         default:
             return nil
