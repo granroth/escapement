@@ -192,6 +192,7 @@ final class DestinationCardView: NSTableCellView {
     private let summaryLabel = NSTextField(labelWithString: "")
     private let statusLabel = NSTextField(labelWithString: "")
     private let nextLabel = NSTextField(labelWithString: "")
+    private let lastLabel = NSTextField(labelWithString: "")
     private let progress = NSProgressIndicator()
 
     override init(frame frameRect: NSRect) {
@@ -209,6 +210,9 @@ final class DestinationCardView: NSTableCellView {
         nextLabel.font = .systemFont(ofSize: 10)
         nextLabel.textColor = .secondaryLabelColor
         nextLabel.alignment = .right
+        lastLabel.font = .systemFont(ofSize: 10)
+        lastLabel.textColor = .secondaryLabelColor
+        lastLabel.alignment = .right
         progress.controlSize = .small
         progress.isIndeterminate = false
         progress.minValue = 0
@@ -220,7 +224,7 @@ final class DestinationCardView: NSTableCellView {
         text.alignment = .leading
         text.spacing = 2
 
-        let right = NSStackView(views: [statusLabel, progress, nextLabel])
+        let right = NSStackView(views: [statusLabel, progress, nextLabel, lastLabel])
         right.orientation = .vertical
         right.alignment = .trailing
         right.spacing = 2
@@ -256,6 +260,7 @@ final class DestinationCardView: NSTableCellView {
         } else {
             nextLabel.stringValue = row.hasSchedule ? "Next: \(row.nextRunText)" : ""
         }
+        lastLabel.stringValue = "Last: \(row.lastRunText)"
 
         if let value = row.progress {
             progress.stopAnimation(nil)
