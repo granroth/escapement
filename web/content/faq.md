@@ -56,6 +56,19 @@ The run fires shortly after it wakes, with a brief delay so that several overdue
 destinations don't all start at once. Escapement won't wake your Mac to take a
 backup — that needs root and a privileged helper.
 
+## What happens if a backup runs long and blocks another destination?
+
+Time Machine only runs one backup at a time, so the second destination waits.
+It isn't skipped invisibly: Escapement records it once and shows what it's
+waiting on. When the slot frees, whichever destination has waited longest goes
+first.
+
+If the running backup is actually stuck rather than just slow, Escapement
+stops it after two hours of no progress so the wait ends. A backup that's slow
+but still moving keeps the slot until it finishes — there's no cutoff for that
+case.
+[More on that →](../docs/#one-backup-at-a-time)
+
 ## What can't it do yet?
 
 - A backup you stop by hand is recorded as completed rather than cancelled. The

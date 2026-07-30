@@ -129,6 +129,24 @@ Press <kbd>⌘</kbd><kbd>,</kbd>. There are three preferences.
 - **Show Escapement in the menu bar**.
 - **Notify me when a backup fails**.
 
+## One backup at a time
+
+Time Machine only runs one backup at a time, for the whole system, not per
+destination. If a backup is still running when another destination comes due,
+that destination waits, and the wait isn't silent: it's recorded once as a
+skipped run, and the menu bar shows what's holding the slot and since when.
+
+When the slot frees, whichever destination has waited longest goes next, not
+whichever is most overdue. That way one destination that's badly behind can't
+keep cutting in line ahead of the one it just made wait.
+
+A backup that's genuinely stuck — no change in phase, bytes copied, or files
+copied, for two hours — gets stopped so the waiting destination can go. Time
+Machine picks it back up where it left off next time rather than starting
+over. A backup that's just slow but still moving is left alone, with no cap on
+how long it can run. A destination that keeps failing gets retried less often
+each time, so a disk that can't back up stops crowding out the ones that can.
+
 ## Sleep and missed runs
 
 A run that comes due while your Mac is asleep or shut down fires shortly after
