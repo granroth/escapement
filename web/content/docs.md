@@ -69,7 +69,7 @@ is scheduled to happen.
 Select a destination, switch **Enabled** on, choose a frequency, and click
 **Apply**.
 
-{{ figure(src="screenshot-main.png", width=900, height=659, wide=true, alt="The Escapement window. The destination list shows one disk idle with a daily 3:00 AM schedule and another mid-backup showing Copying with a progress bar. The right pane holds the schedule editor.") }}
+{{ figure(src="screenshot-main.png", width=900, height=659, wide=true, alt="The Escapement window. The destination list shows one disk idle with a daily 3:00 AM schedule and another mid-backup showing Copying with a progress bar, each with a line reporting when its last backup completed. The right pane holds the schedule editor.") }}
 
 Escapement lists every destination it finds, so anything set up in System
 Settings is already here. Each row shows its schedule, what it is doing, and
