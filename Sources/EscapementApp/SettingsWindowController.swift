@@ -28,6 +28,18 @@ final class SettingsWindowController: NSWindowController {
     private let approvalButton = NSButton(title: "Open Login Items", target: nil, action: nil)
     private let menuBarCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let notifyCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
+    private let updateIntervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let checkNowButton = NSButton(title: "Check Now", target: nil, action: nil)
+    private let updateStatusLabel = NSTextField(labelWithString: "")
+    private let viewReleaseButton = NSButton(title: "View Release", target: nil, action: nil)
+
+    /// Pairs each interval with its menu title so the popup's item order and
+    /// selection index are always derived from one list rather than two
+    /// hand-maintained orderings that could drift apart.
+    private let intervalOptions: [(UpdateCheckInterval, String)] = [
+        (.never, "Never"), (.onStartup, "On Startup"), (.daily, "Daily"),
+        (.weekly, "Weekly"), (.monthly, "Monthly"),
+    ]
 
     private init(controller: AppController) {
         self.controller = controller
@@ -79,14 +91,48 @@ final class SettingsWindowController: NSWindowController {
         notifyCheckbox.target = self
         notifyCheckbox.action = #selector(toggleNotifications)
 
+        let updateHeading = NSTextField(labelWithString: "Check for Updates")
+        updateHeading.font = .boldSystemFont(ofSize: 13)
+
+        let updateLabel = NSTextField(labelWithString: "Frequency:")
+
+        updateIntervalPopup.addItems(withTitles: intervalOptions.map(\.1))
+        updateIntervalPopup.target = self
+        updateIntervalPopup.action = #selector(updateCheckIntervalChanged)
+
+        checkNowButton.bezelStyle = .rounded
+        checkNowButton.target = self
+        checkNowButton.action = #selector(checkForUpdatesNow)
+
+        updateStatusLabel.font = .systemFont(ofSize: 11)
+        updateStatusLabel.textColor = .secondaryLabelColor
+        updateStatusLabel.lineBreakMode = .byWordWrapping
+        updateStatusLabel.maximumNumberOfLines = 3
+        updateStatusLabel.preferredMaxLayoutWidth = 420
+
+        viewReleaseButton.bezelStyle = .rounded
+        viewReleaseButton.target = self
+        viewReleaseButton.action = #selector(viewRelease)
+        viewReleaseButton.isHidden = true
+
         let buttons = NSStackView(views: [toggleButton, approvalButton])
         buttons.orientation = .horizontal
         buttons.spacing = 10
+
+        let updateControls = NSStackView(views: [updateLabel, updateIntervalPopup, checkNowButton])
+        updateControls.orientation = .horizontal
+        updateControls.spacing = 10
+
+        let updateStatusRow = NSStackView(views: [updateStatusLabel, viewReleaseButton])
+        updateStatusRow.orientation = .horizontal
+        updateStatusRow.spacing = 10
 
         let stack = NSStackView(views: [
             heading, statusLabel, buttons,
             separator(),
             menuBarCheckbox, notifyCheckbox,
+            separator(),
+            updateHeading, updateControls, updateStatusRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -94,6 +140,7 @@ final class SettingsWindowController: NSWindowController {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.setCustomSpacing(6, after: heading)
         stack.setCustomSpacing(18, after: buttons)
+        stack.setCustomSpacing(6, after: updateHeading)
 
         let content = NSView()
         content.addSubview(stack)
@@ -153,6 +200,31 @@ final class SettingsWindowController: NSWindowController {
 
         menuBarCheckbox.state = controller.configuration.showsMenuBarIcon ? .on : .off
         notifyCheckbox.state = controller.configuration.notifiesOnFailure ? .on : .off
+
+        if let index = intervalOptions.firstIndex(where: {
+            $0.0 == controller.configuration.updateCheckInterval
+        }) {
+            updateIntervalPopup.selectItem(at: index)
+        }
+        // Unlike the interval, which is a preference that takes effect once
+        // the agent is next enabled, Check Now is a verb that needs a
+        // running agent to act on — same reasoning as the toolbar's Back Up
+        // Now item.
+        checkNowButton.isEnabled = controller.isAgentEnabled
+        if let available = controller.agentState.availableUpdate {
+            updateStatusLabel.stringValue = "Escapement \(available.version) is available."
+            viewReleaseButton.isHidden = false
+        } else {
+            updateStatusLabel.stringValue = statusText(forLastCheckedAt: controller.agentState.lastUpdateCheck)
+            viewReleaseButton.isHidden = true
+        }
+    }
+
+    private func statusText(forLastCheckedAt date: Date?) -> String {
+        guard let date else { return "Never checked" }
+        let relative = RelativeDateTimeFormatter()
+        relative.locale = controller.locale
+        return "Last check: \(relative.localizedString(for: date, relativeTo: Date()))"
     }
 
     // MARK: - Actions
@@ -204,6 +276,29 @@ final class SettingsWindowController: NSWindowController {
         // prompt out of nowhere is exactly the behaviour this milestone is
         // trying to remove.
         if enabled { controller.requestNotificationAuthorization() }
+    }
+
+    @objc private func updateCheckIntervalChanged(_ sender: NSPopUpButton) {
+        let interval = intervalOptions[sender.indexOfSelectedItem].0
+        guard controller.setUpdateCheckInterval(interval) else {
+            present(
+                "Couldn’t save that setting",
+                "Escapement could not write its configuration file, so the change was not kept.")
+            return
+        }
+        // Ask for permission from the GUI, where the user just clicked, rather
+        // than from the agent, mirroring `toggleNotifications`.
+        if interval != .never { controller.requestUpdateNotificationAuthorization() }
+    }
+
+    @objc private func checkForUpdatesNow() {
+        controller.checkForUpdatesNow()
+    }
+
+    @objc private func viewRelease() {
+        if let url = controller.agentState.availableUpdate?.releaseURL {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func present(_ message: String, _ informative: String) {

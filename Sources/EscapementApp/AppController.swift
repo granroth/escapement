@@ -142,6 +142,14 @@ final class AppController {
         requestRefresh()
     }
 
+    /// Runs a check immediately, ignoring the configured interval. Only posted
+    /// when the agent is running — it's the agent that drains `command.json`.
+    func checkForUpdatesNow() {
+        guard isAgentEnabled else { return }
+        try? commandStore.post(.checkForUpdatesNow)
+        requestRefresh()
+    }
+
     // MARK: - Configuration
 
     /// Persists a preference change, reporting whether it actually landed.
@@ -175,6 +183,11 @@ final class AppController {
         updateConfiguration { $0.notifiesOnFailure = notifies }
     }
 
+    @discardableResult
+    func setUpdateCheckInterval(_ interval: UpdateCheckInterval) -> Bool {
+        updateConfiguration { $0.updateCheckInterval = interval }
+    }
+
     /// Called when the user asked for failure notifications but the system
     /// refused permission, so the UI can explain instead of quietly lying.
     var onNotificationAuthorizationDenied: (() -> Void)?
@@ -195,6 +208,16 @@ final class AppController {
                 self.onNotificationAuthorizationDenied?()
             }
         }
+    }
+
+    /// Asks for notification permission from the GUI when the user turns
+    /// update checking on, mirroring `requestNotificationAuthorization()`.
+    /// Unlike that one, denial reverts nothing here: the Settings status line
+    /// always reports an available update whether or not the OS notification
+    /// can be delivered, so there's no failure mode where the user learns
+    /// nothing and nothing to promise-and-fail-to-deliver.
+    func requestUpdateNotificationAuthorization() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     func apply(_ schedule: DestinationSchedule) {

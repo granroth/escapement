@@ -121,13 +121,40 @@ per-disk, matching how Time Machine's own scheduling works.
 
 ## Settings
 
-Press <kbd>⌘</kbd><kbd>,</kbd>. There are three preferences.
+Press <kbd>⌘</kbd><kbd>,</kbd>. There are four preferences.
 
-{{ figure(src="screenshot-settings.png", width=460, height=219, alt="Escapement's Settings window: a Background Backups section with a Turn Off button, plus checkboxes for the menu bar icon and failure notifications.") }}
+{{ figure(src="screenshot-settings.png", width=460, height=326, alt="Escapement's Settings window: a Background Backups section with a Turn Off button, checkboxes for the menu bar icon and failure notifications, and a Check for Updates section with a frequency dropdown, a Check Now button, and a status line reporting that a newer version is available.") }}
 
 - **Background Backups** — the master switch.
 - **Show Escapement in the menu bar**.
 - **Notify me when a backup fails**.
+- **Check for Updates** — how often the agent checks GitHub for a newer
+  release: Never, On Startup, Daily, Weekly, or Monthly, plus a Check Now
+  button. See [Checking for updates](#checking-for-updates) below.
+
+## Checking for updates
+
+The one thing Escapement's background agent asks the network for: whether a
+newer release exists. Nothing else about the app touches the network at all.
+
+Set the frequency in Settings — **Never**, **On Startup** (the default),
+**Daily**, **Weekly**, or **Monthly** — or press **Check Now** for an
+immediate one-off check regardless of that setting. On Startup runs once each
+time the agent starts, roughly once per login, which matters because the
+agent is the thing that's actually running most of the time; the app itself
+only needs to be open to change the setting or to read the result.
+
+A check compares the latest release on GitHub against the version you're
+running. If it's newer, you get a native notification and Settings shows a
+line naming it with a link to the release — nothing is ever downloaded or
+installed automatically. Clicking the notification, or the link in Settings,
+opens the release page in your browser.
+
+Escapement is likely to be feature-complete not long after 1.0, so future
+releases will mostly be rare, critical fixes — for a `tmutil` change, or a
+security issue. That's exactly the kind of release a "check GitHub
+yourself" habit tends to miss, which is why this defaults to on rather than
+off like the failure notification does.
 
 ## One backup at a time
 

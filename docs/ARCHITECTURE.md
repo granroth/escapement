@@ -128,6 +128,31 @@ with a `DispatchSource` file-system source; the agent writes `state.json` and
 `history.json`, the app watches those. This keeps both processes trivially
 testable and removes an entire class of connection-lifecycle bugs.
 
+## Checking for updates
+
+The one deliberate exception to Escapement otherwise never touching the
+network: the agent can check GitHub's release API for a newer version, on a
+user-configured interval (`Configuration.updateCheckInterval`, defaulting to
+`.onStartup`). See spec 014.
+
+It runs from the agent rather than the app because the agent is the thing
+actually running when it matters — the app is a viewer, opened on demand,
+and the whole reason this exists is to reach a user who never opens it.
+Escapement is expected to be near feature-complete shortly after 1.0, so
+future releases will be rare and mostly critical (a `tmutil` behaviour
+change, a security fix); "the user checks GitHub themselves" is a poor way
+to deliver exactly the releases that matter most.
+
+The network call is isolated behind an `UpdateSource` protocol in
+`EscapementKit`, the same way `TMUtilController` fronts `tmutil` — the
+comparison logic is pure and tested against a fake source, and the one real
+`URLSession` request lives in `EscapementAgent`, verified by tracing and by
+driving the real agent rather than by unit test. A match only ever produces
+a version string and a link to the release page; nothing is downloaded or
+executed. Denial of notification permission doesn't disable the feature —
+unlike the failure notification, Settings' status line reports the result
+either way, so there's no failure mode where the user learns nothing.
+
 ## Missed schedules
 
 A run that comes due while the Mac is asleep or shut down fires shortly after

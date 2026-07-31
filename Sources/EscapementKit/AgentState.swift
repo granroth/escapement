@@ -43,6 +43,15 @@ public struct AgentState: Codable, Hashable, Sendable {
         }
     }
 
+    /// When the agent last checked for a newer release, regardless of
+    /// outcome. `nil` means never.
+    public private(set) var lastUpdateCheck: Date?
+
+    /// The newer release found by the most recent successful check, if any.
+    /// Cleared by a successful check that finds nothing newer; left alone by
+    /// a failed one, so a transient network outage can't erase a real result.
+    public private(set) var availableUpdate: AvailableUpdate?
+
     public init(pausedUntil: Date? = nil, waiting: Waiting? = nil) {
         self.pausedUntil = pausedUntil
         self.waiting = waiting
@@ -77,5 +86,20 @@ public struct AgentState: Codable, Hashable, Sendable {
 
     public mutating func setWaiting(_ waiting: Waiting?) {
         self.waiting = waiting
+    }
+
+    /// Records a completed check. Always overwrites `availableUpdate`,
+    /// including to `nil` — a check that finds nothing newer means any
+    /// previously known update has since been installed or withdrawn.
+    public mutating func recordUpdateCheck(at date: Date, availableUpdate: AvailableUpdate?) {
+        self.lastUpdateCheck = date
+        self.availableUpdate = availableUpdate
+    }
+
+    /// Records a check that could not complete (e.g. no network). Only the
+    /// timestamp moves, so the schedule doesn't retry every tick; a
+    /// previously known update is left in place rather than guessed away.
+    public mutating func recordFailedUpdateCheck(at date: Date) {
+        lastUpdateCheck = date
     }
 }

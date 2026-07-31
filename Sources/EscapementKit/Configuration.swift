@@ -27,15 +27,24 @@ public struct Configuration: Codable, Hashable, Sendable {
     /// one the user turns on deliberately.
     public var notifiesOnFailure: Bool
 
+    /// How often the agent checks GitHub's release API for a newer version —
+    /// the one exception to Escapement never touching the network (see spec
+    /// 014). Defaults to `.onStartup`: rare-but-critical post-1.0 releases
+    /// need some baseline chance of reaching a user who never opens Settings,
+    /// so unlike `notifiesOnFailure` this isn't off by default.
+    public var updateCheckInterval: UpdateCheckInterval
+
     public init(
         schedules: [DestinationSchedule] = [],
         showsMenuBarIcon: Bool = true,
-        notifiesOnFailure: Bool = false
+        notifiesOnFailure: Bool = false,
+        updateCheckInterval: UpdateCheckInterval = .onStartup
     ) {
         self.schemaVersion = Self.currentSchemaVersion
         self.schedules = schedules
         self.showsMenuBarIcon = showsMenuBarIcon
         self.notifiesOnFailure = notifiesOnFailure
+        self.updateCheckInterval = updateCheckInterval
     }
 
     /// The schedule for a destination, if one exists.
@@ -63,6 +72,7 @@ public struct Configuration: Codable, Hashable, Sendable {
         case schedules
         case showsMenuBarIcon
         case notifiesOnFailure
+        case updateCheckInterval
     }
 
     public init(from decoder: any Decoder) throws {
@@ -79,5 +89,10 @@ public struct Configuration: Codable, Hashable, Sendable {
             try container.decodeIfPresent(Bool.self, forKey: .showsMenuBarIcon) ?? true
         notifiesOnFailure =
             try container.decodeIfPresent(Bool.self, forKey: .notifiesOnFailure) ?? false
+        // A file predating this preference decodes as onStartup, matching the
+        // default for a fresh install.
+        updateCheckInterval =
+            try container.decodeIfPresent(UpdateCheckInterval.self, forKey: .updateCheckInterval)
+            ?? .onStartup
     }
 }

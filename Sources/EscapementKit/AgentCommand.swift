@@ -15,6 +15,10 @@ public enum AgentCommand: Codable, Hashable, Sendable {
     /// and two processes writing one file would race.
     case pause(until: Date?)
     case resume
+    /// Check for a newer release immediately, ignoring the configured
+    /// interval and when the last check happened — the Settings "Check Now"
+    /// button.
+    case checkForUpdatesNow
 }
 
 /// Reads and writes the pending manual command.

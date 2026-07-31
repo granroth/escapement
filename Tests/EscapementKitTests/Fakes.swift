@@ -48,6 +48,18 @@ actor FakeTimeMachine: TimeMachineControlling {
 
 struct FakeError: Error {}
 
+/// A hand-driven `UpdateSource` for exercising `UpdateChecker` without a real
+/// network request: returns a canned release, or throws a canned error.
+struct FakeUpdateSource: UpdateSource {
+    var release: ReleaseInfo?
+    var error: (any Error)?
+
+    func latestRelease() async throws -> ReleaseInfo {
+        if let error { throw error }
+        return release!
+    }
+}
+
 /// A clock the tests advance by hand, so time-dependent behaviour is
 /// deterministic.
 final class TestClock: @unchecked Sendable {

@@ -42,8 +42,28 @@ It never reads, writes, moves, or deletes backup data, and has no code that
 does. It doesn't create or delete destinations either. It makes the same "start
 a backup now" request you could type into Terminal.
 
-It's signed with a Developer ID and notarized by Apple, and contains no
-networking code at all: no analytics, no update check, no accounts.
+It's signed with a Developer ID and notarized by Apple. It has no analytics
+and no accounts, and makes exactly one kind of network request — an optional
+check of GitHub's release page for a newer version, covered next.
+
+## Does it check for updates?
+
+Optionally, and it's the one exception to Escapement otherwise never touching
+the network at all — worth being upfront about rather than quietly adding.
+
+Settings has a **Check for Updates** frequency: Never, On Startup, Daily,
+Weekly, or Monthly, plus a **Check Now** button. It defaults to On Startup,
+because Escapement is likely to be feature-complete soon after 1.0 —
+after that, releases will mostly be rare, critical fixes for a `tmutil` or
+macOS change, exactly the kind of update a "check GitHub yourself" habit
+tends to miss.
+
+A check asks GitHub which release is newest and compares it against the
+version you're running. Nothing is ever downloaded or installed — a newer
+version only ever produces a notification and a link to its release page,
+which opens in your browser. Turning the frequency to Never disables it
+entirely, including the check when the background agent starts; **Check
+Now** still works, since that's a request you made yourself.
 
 ## Do backups run when the app is closed?
 

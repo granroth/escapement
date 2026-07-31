@@ -9,7 +9,7 @@ import os
 /// configuration changes and manual commands, and the menu bar extra. It is the
 /// single process that fires backups and writes history.
 @MainActor
-final class AgentService: NSObject, StatusItemActions {
+final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterDelegate {
 
     private let control = TMUtilController()
     private let configurationStore = ConfigurationStore()
@@ -19,6 +19,7 @@ final class AgentService: NSObject, StatusItemActions {
     private let runner: SchedulerRunner
     private let log = Logger(subsystem: "com.granroth.Escapement", category: "agent")
     private let summaryBuilder = StatusSummaryBuilder(calendar: .current, locale: .current)
+    private let updateChecker = UpdateChecker(source: GitHubReleaseSource())
 
     private var statusItem: StatusItemController!
 
@@ -59,6 +60,10 @@ final class AgentService: NSObject, StatusItemActions {
         seedKnownFailures()
         observeWake()
         watchSupportDirectory()
+        UNUserNotificationCenter.current().delegate = self
+        // Independent of the scheduling tick below: the network round trip
+        // must never delay the very first backup evaluation of the run.
+        Task { await self.performStartupUpdateCheckIfNeeded() }
         Task { await self.tick() }
     }
 
@@ -68,6 +73,7 @@ final class AgentService: NSObject, StatusItemActions {
         await processCommands()
         await runner.evaluate()
         await notifyOfNewFailures()
+        checkForUpdatesIfDue()
         await refreshStatusItem()
         await rescheduleTimer()
     }
@@ -141,7 +147,114 @@ final class AgentService: NSObject, StatusItemActions {
             case .resume:
                 log.log("resume requested")
                 await runner.resume()
+            case .checkForUpdatesNow:
+                log.log("update check requested")
+                // Spawned, not awaited, like the due-check below: this command
+                // is drained inside the same `tick()` that evaluates schedules,
+                // and a slow or hung network request must never delay that.
+                Task { await self.performUpdateCheck() }
             }
+        }
+    }
+
+    // MARK: - Update check
+
+    /// The one network call in the whole app (see spec 014). Runs once per
+    /// process launch when the interval is `.onStartup` specifically — NOT
+    /// for every non-`.never` interval. Daily/weekly/monthly are driven
+    /// entirely by `checkForUpdatesIfDue()`'s elapsed-time math below; firing
+    /// them here too would let both paths decide independently that a check
+    /// is due (e.g. whenever `lastUpdateCheck` is stale at launch, the common
+    /// case) and run concurrently.
+    private func performStartupUpdateCheckIfNeeded() async {
+        let configuration = (try? configurationStore.load()) ?? Configuration()
+        guard configuration.updateCheckInterval == .onStartup else { return }
+        await performUpdateCheck()
+    }
+
+    /// Checked on every tick, not just at startup, so daily/weekly/monthly
+    /// intervals fire without requiring a restart. Spawned rather than
+    /// awaited so a slow or hung network request can never delay backup
+    /// scheduling, which `tick()` also does every pass.
+    private func checkForUpdatesIfDue() {
+        Task {
+            let configuration = (try? configurationStore.load()) ?? Configuration()
+            let lastChecked = (try? stateStore.load())?.lastUpdateCheck
+            guard
+                UpdateCheckScheduling.isDue(
+                    interval: configuration.updateCheckInterval, lastCheckedAt: lastChecked,
+                    now: Date())
+            else { return }
+            await performUpdateCheck()
+        }
+    }
+
+    /// Guards against two `performUpdateCheck()` calls overlapping — e.g. a
+    /// Check Now command landing while the startup or a scheduled check is
+    /// still awaiting its network round trip. Both would otherwise read the
+    /// same stale `availableUpdate` before either writes back, and could
+    /// both notify. Safe as a plain `Bool` because every caller runs on the
+    /// main actor and the check happens before this function's own first
+    /// `await`, so nothing can interleave between the check and the set.
+    private var updateCheckInFlight = false
+
+    /// Runs a check right now, records the outcome, and — only when the
+    /// found version differs from the one already on record — announces it.
+    /// A failed check stamps the timestamp so it doesn't retry every tick,
+    /// but leaves a previously known update in place; a transient outage
+    /// must not erase a real result.
+    private func performUpdateCheck() async {
+        guard !updateCheckInFlight else { return }
+        updateCheckInFlight = true
+        defer { updateCheckInFlight = false }
+
+        let currentVersion =
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        let previous = (try? stateStore.load())?.availableUpdate
+        do {
+            let result = try await updateChecker.checkForUpdate(currentVersion: currentVersion)
+            try? stateStore.mutate { $0.recordUpdateCheck(at: Date(), availableUpdate: result) }
+            if let result, result.version != previous?.version {
+                postUpdateNotification(result)
+            }
+        } catch {
+            log.error("update check failed: \(error.localizedDescription, privacy: .public)")
+            try? stateStore.mutate { $0.recordFailedUpdateCheck(at: Date()) }
+        }
+    }
+
+    private func postUpdateNotification(_ update: AvailableUpdate) {
+        let content = UNMutableNotificationContent()
+        content.title = "Escapement \(update.version) is available"
+        content.body = "Tap to view the release on GitHub."
+        content.userInfo = ["releaseURL": update.releaseURL.absoluteString]
+        let request = UNNotificationRequest(
+            identifier: "update-\(update.version)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { [log] error in
+            if let error {
+                log.error(
+                    "could not post update notification: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// Clicking the update notification opens the release page in the
+    /// default browser, not the app — there's nothing in the app to show for
+    /// it, the release page is the whole point.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        defer { completionHandler() }
+        guard let urlString = response.notification.request.content.userInfo["releaseURL"] as? String,
+            let url = URL(string: urlString)
+        else { return }
+        Task { @MainActor in
+            NSWorkspace.shared.open(url)
         }
     }
 
