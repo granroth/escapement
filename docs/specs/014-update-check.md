@@ -1,6 +1,6 @@
 # Spec 014 — Checking for updates
 
-Status: draft
+Status: implemented
 
 ## Problem
 
