@@ -103,15 +103,20 @@ struct SchedulerRunnerTests {
         await h.runner.evaluate()
 
         #expect(await h.fake.startCalls.isEmpty)
+        let runs = try h.history.load()
+        #expect(runs.count == 2)
         // The due occurrence is recorded as skipped rather than silently
         // dropped — a busy slot must leave a trace in the Activity Log.
-        let runs = try h.history.load()
-        #expect(runs.count == 1)
-        #expect(runs[0].destinationID == "A")
-        if case .skipped = runs[0].outcome {
+        let a = try #require(runs.first { $0.destinationID == "A" })
+        if case .skipped = a.outcome {
         } else {
-            Issue.record("expected .skipped, got \(runs[0].outcome)")
+            Issue.record("expected .skipped, got \(a.outcome)")
         }
+        // B is a live, unattributed backup with no schedule of its own — it
+        // is adopted rather than silently ignored (spec 015).
+        let b = try #require(runs.first { $0.destinationID == "B" })
+        #expect(b.trigger == .external)
+        #expect(b.outcome == .running)
     }
 
     @Test("closes a run as completed once the backup is observed then stops")
@@ -129,7 +134,12 @@ struct SchedulerRunnerTests {
         h.clock.advance(by: 300)
         await h.runner.evaluate()  // observes idle -> completed
 
-        let run = try h.history.load()[0]
+        let runs = try h.history.load()
+        // Own runs are not adoption candidates (conditions 2 and 3 exclude
+        // them throughout), so this stays a single record.
+        #expect(runs.count == 1)
+        let run = runs[0]
+        #expect(run.trigger != .external)
         #expect(run.outcome == .completed)
         #expect(run.finishedAt != nil)
     }
@@ -533,6 +543,9 @@ struct SchedulerRunnerTests {
         let h = Harness(now: date(2026, 3, 10, 3, 1))
         defer { h.cleanup() }
         try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        // B is live with no schedule of its own, so it is adopted (spec 015)
+        // rather than being an unattributed busy slot — the destination the
+        // waiting state should still name as the holder either way.
         await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: nil))
 
         await h.runner.evaluate()
@@ -543,7 +556,14 @@ struct SchedulerRunnerTests {
 
         await h.fake.setActivity(.idle)
         h.clock.advance(by: 10)
-        await h.runner.evaluate()
+        await h.runner.evaluate()  // arms B's close confirmation; still blocked
+
+        let stillWaiting = try h.state.load().waiting
+        #expect(stillWaiting?.blockedDestinationID == "A")
+        #expect(stillWaiting?.holderDestinationID == nil)  // idle, so no named holder
+
+        h.clock.advance(by: 10)
+        await h.runner.evaluate()  // B's second idle poll closes it; A can start
 
         #expect(try h.state.load().waiting == nil)
     }
@@ -628,5 +648,368 @@ struct SchedulerRunnerTests {
         try h.setPaused(until: date(2026, 3, 10, 9, 0))
 
         #expect(await h.runner.nextWakeUp() == date(2026, 3, 11, 3, 0))
+    }
+}
+
+@Suite("External backup detection")
+struct ExternalBackupDetectionTests {
+
+    @Test("a live external backup is adopted as an ordinary history record")
+    func adoptsExternalBackup() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+
+        await h.runner.evaluate()
+        var runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].destinationID == "A")
+        #expect(runs[0].trigger == .external)
+        #expect(runs[0].outcome == .running)
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // first non-live poll only arms confirmation
+        #expect(try h.history.load()[0].outcome == .running)
+
+        await h.runner.evaluate()  // second consecutive non-live poll closes it
+        runs = try h.history.load()
+        #expect(runs[0].outcome == .completed)
+        #expect(runs[0].finishedAt != nil)
+    }
+
+    @Test("an external backup is adopted once, not once per tick")
+    func adoptsOnce() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+
+        await h.runner.evaluate()
+        await h.runner.evaluate()
+        await h.runner.evaluate()
+
+        #expect(try h.history.load().count == 1)
+    }
+
+    @Test("a nil destination id is never adopted")
+    func nilDestinationNotAdopted() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: nil, phase: .copying, progress: nil))
+
+        await h.runner.evaluate()
+        await h.runner.evaluate()
+        #expect(try h.history.load().isEmpty)
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()
+        #expect(try h.history.load().isEmpty)
+    }
+
+    @Test("a backup first observed already stopping is not adopted")
+    func stoppingNotAdopted() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.stopping(destinationID: "A"))
+
+        await h.runner.evaluate()
+
+        #expect(try h.history.load().isEmpty)
+    }
+
+    @Test("an external backup on another destination is not adopted while a run awaits its startup grace")
+    func noOverlapDuringStartupGrace() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        // Fake stays idle after start (autoBecomeRunning left off), so A sits
+        // inside its startup grace throughout.
+
+        await h.runner.evaluate()  // starts A
+        await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: nil))
+        await h.runner.evaluate()
+
+        let runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].destinationID == "A")
+        #expect(runs[0].outcome == .running)
+    }
+
+    @Test("adopts a new external backup on the same tick a run closes")
+    func adoptsOnSameTickAnotherCloses() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setAutoBecomeRunning(true)
+
+        await h.runner.evaluate()  // starts A; fake flips to running(A)
+        await h.runner.evaluate()  // observes A running -> stays open
+
+        // A's own activity is replaced by B's in one step, as it would be if
+        // A finished and B started between polls: this tick's reconciliation
+        // must close A from a *fresh* read, not the stale pre-loop snapshot,
+        // or it will wrongly refuse to adopt B.
+        await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: nil))
+        await h.runner.evaluate()
+
+        let runs = try h.history.load()
+        #expect(runs.count == 2)
+        let a = try #require(runs.first { $0.destinationID == "A" })
+        let b = try #require(runs.first { $0.destinationID == "B" })
+        #expect(a.trigger == .scheduled)
+        #expect(a.outcome == .completed)
+        #expect(b.trigger == .external)
+        #expect(b.outcome == .running)
+    }
+
+    @Test("a stopped external backup closes as cancelled, not completed")
+    func externalCancellation() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopt
+
+        await h.fake.setActivity(.stopping(destinationID: "A"))
+        await h.runner.evaluate()  // observes stopping -> observedStopping = true
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // arm confirmation
+        await h.runner.evaluate()  // close
+
+        let runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].outcome == .cancelled)
+    }
+
+    @Test("Escapement's own stopped run also closes as cancelled, not completed")
+    func ownRunStoppedClosesAsCancelled() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setAutoBecomeRunning(true)
+
+        await h.runner.evaluate()  // starts; fake flips to running
+        await h.runner.evaluate()  // observes running
+
+        // The GUI/menu-bar Stop command calls this directly, with no
+        // knowledge of which run is open — exactly what the fake models.
+        try await h.fake.stopBackup()
+        await h.runner.evaluate()  // observes stopping -> observedStopping = true
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // own runs close on the very next non-live poll
+
+        #expect(try h.history.load()[0].outcome == .cancelled)
+    }
+
+    @Test("a manual Stop reaches an adopted run — it is not restricted to Escapement's own")
+    func manualStopReachesAdoptedRun() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopt
+
+        try await h.fake.stopBackup()  // the menu bar / AgentCommand.stop path
+        await h.runner.evaluate()
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()
+        await h.runner.evaluate()
+
+        let runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].outcome == .cancelled)
+    }
+
+    @Test("a one-poll blip to idle does not duplicate an adopted record")
+    func blipDoesNotDuplicate() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()
+        let id = try h.history.load()[0].id
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // arms confirmation
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // the blip resolves; same open run, not a new one
+
+        var runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].id == id)
+        #expect(runs[0].outcome == .running)
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()
+        await h.runner.evaluate()
+
+        runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].outcome == .completed)
+    }
+
+    @Test("a run awaiting close confirmation holds the slot for the whole tick")
+    func pendingConfirmationHoldsSlot() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopt A
+
+        // B is already overdue, so it is this tick's nominal winner — the
+        // case the deferral must actually catch.
+        try h.setDaily("B", at: 3, from: date(2026, 3, 1, 12, 0))
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // arms A's confirmation; must not start B
+
+        #expect(await h.fake.startCalls.isEmpty)
+        var runs = try h.history.load()
+        #expect(runs.first { $0.destinationID == "A" }?.outcome == .running)
+        #expect(!runs.contains { $0.destinationID == "B" })
+
+        await h.runner.evaluate()  // A closes; B starts in the same tick
+
+        #expect(await h.fake.startCalls == ["B"])
+        runs = try h.history.load()
+        #expect(runs.first { $0.destinationID == "A" }?.outcome == .completed)
+        #expect(runs.first { $0.destinationID == "B" }?.outcome == .running)
+    }
+
+    @Test("backUpNow also respects a pending close confirmation, not just evaluate()")
+    func backUpNowRespectsPendingConfirmation() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopt A
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // arms A's confirmation; the idle sample is not trusted yet
+
+        // The GUI/menu bar's own activity read is fooled by the same blip,
+        // so the user can still press Back Up Now for another destination.
+        await h.runner.backUpNow(destinationID: "B")
+
+        #expect(await h.fake.startCalls.isEmpty)
+        var runs = try h.history.load()
+        #expect(runs.first { $0.destinationID == "A" }?.outcome == .running)
+        #expect(!runs.contains { $0.destinationID == "B" })
+
+        // Once A is genuinely confirmed closed, backUpNow works normally.
+        await h.runner.evaluate()  // A's second idle poll closes it
+        await h.runner.backUpNow(destinationID: "B")
+
+        #expect(await h.fake.startCalls == ["B"])
+        runs = try h.history.load()
+        #expect(runs.first { $0.destinationID == "B" }?.trigger == .manual)
+    }
+
+    @Test("a completed external run advances due-ness like a completed scheduled one")
+    func externalCompletionAdvancesDueness() async throws {
+        let h = Harness(now: date(2026, 3, 10, 8, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 1, 12, 0))
+
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopt at 08:00
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // arm
+        await h.runner.evaluate()  // close .completed
+        #expect(try h.history.load().first?.outcome == .completed)
+
+        await h.runner.evaluate()  // A must not start again today
+        #expect(await h.fake.startCalls.isEmpty)
+
+        h.clock.set(date(2026, 3, 11, 3, 1))
+        await h.runner.evaluate()  // due again at the following 03:00
+        #expect(await h.fake.startCalls == ["A"])
+    }
+
+    @Test("cooldown applies after an adopted run is cancelled, same as any other")
+    func cooldownAppliesAfterCancellation() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopt
+        await h.fake.setActivity(.stopping(destinationID: "A"))
+        await h.runner.evaluate()
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // arm
+        await h.runner.evaluate()  // close .cancelled
+
+        await h.runner.evaluate()  // A is due again immediately, but cooldown applies
+        #expect(await h.fake.startCalls.isEmpty)
+
+        h.clock.advance(by: 16 * 60)  // past the default 15-minute retryCooldown
+        await h.runner.evaluate()
+        #expect(await h.fake.startCalls == ["A"])
+    }
+
+    @Test("an adopted run costs its destination its place in the fairness rotation")
+    func adoptedRunCostsFairnessPriority() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 1, 12, 0))
+        try h.setDaily("B", at: 3, from: date(2026, 3, 1, 12, 0))
+
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopt A
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()  // arm
+        await h.runner.evaluate()  // close A .completed
+
+        await h.runner.evaluate()  // both due; B must win, since A just ran
+        #expect(await h.fake.startCalls == ["B"])
+    }
+
+    @Test("the stall watchdog does not touch an adopted run")
+    func watchdogExemptForExternalRuns() async throws {
+        // Paired with `stallWatchdogStopsAStuckRun`: same activity shape,
+        // same timeout, same held snapshot — differing only in the trigger.
+        let h = Harness(now: date(2026, 3, 10, 3, 1), stallTimeout: 3600)
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+
+        await h.runner.evaluate()  // adopts A
+        await h.runner.evaluate()  // records the baseline snapshot
+
+        h.clock.advance(by: 3700)  // past the stall timeout with no change at all
+        await h.runner.evaluate()
+
+        #expect(await h.fake.stopCalls == 0)
+        #expect(try h.history.load()[0].outcome == .running)
+    }
+
+    @Test("adoption and close-out happen while paused; no scheduled run starts")
+    func adoptionWorksWhilePaused() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 1, 12, 0))  // due
+        try h.setPaused(until: date(2026, 3, 20, 0, 0))
+
+        await h.fake.setActivity(.running(destinationID: "B", phase: .copying, progress: nil))
+        await h.runner.evaluate()  // adopts B despite the pause
+
+        #expect(try h.history.load().first { $0.destinationID == "B" }?.trigger == .external)
+        #expect(await h.fake.startCalls.isEmpty)  // A's own due schedule stays suppressed
+
+        await h.fake.setActivity(.idle)
+        await h.runner.evaluate()
+        await h.runner.evaluate()
+
+        #expect(try h.history.load().first { $0.destinationID == "B" }?.outcome == .completed)
+        #expect(await h.fake.startCalls.isEmpty)
+    }
+
+    @Test("a backup that starts and finishes between polls is never recorded")
+    func betweenPollsMiss() async throws {
+        let h = Harness(now: date(2026, 3, 10, 12, 0))
+        defer { h.cleanup() }
+        await h.fake.setActivity(.running(destinationID: "A", phase: .copying, progress: nil))
+        await h.fake.setActivity(.idle)  // both changes land before any evaluate()
+
+        await h.runner.evaluate()
+
+        #expect(try h.history.load().isEmpty)
     }
 }

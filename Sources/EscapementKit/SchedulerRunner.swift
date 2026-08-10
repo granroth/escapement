@@ -45,12 +45,26 @@ public actor SchedulerRunner {
     private let scheduler: Scheduler
     private let now: @Sendable () -> Date
 
-    /// The run this runner most recently started and has not yet closed out,
-    /// with whether the backup has been observed live at least once.
+    /// The run this runner most recently started or adopted and has not yet
+    /// closed out.
     private struct OpenRun {
         let id: UUID
         let destinationID: String
+        /// Whether the backup has been observed live at least once.
         var observedRunning: Bool
+        /// Whether activity has been observed as `.stopping` for this run —
+        /// distinguishes a cancellation from a clean finish, since both reach
+        /// `.idle` the same way. Set for every run, not just adopted ones: it
+        /// is also what makes Escapement's own Stop command record
+        /// `.cancelled` instead of `.completed`.
+        var observedStopping: Bool
+        /// Set on the first non-live poll of an *adopted* run, cleared on any
+        /// live observation. An adopted run closes only on the second
+        /// consecutive non-live poll — see the confirmation rule in spec 015
+        /// §4 — because unlike a run Escapement started, nothing else will
+        /// ever re-open one it closed too early, so a single bad sample would
+        /// mint a duplicate record rather than merely closing one run wrong.
+        var awaitingCloseConfirmation: Bool
     }
     private var openRun: OpenRun?
 
@@ -169,9 +183,13 @@ public actor SchedulerRunner {
             due: due, excluding: winnerID, lastAttempts: lastAttempts, runs: runs)
 
         // Respect the retry cooldown so a destination that just failed is not
-        // restarted on the very next tick.
+        // restarted on the very next tick. A run awaiting close confirmation
+        // (spec 015 §4) also blocks every start this tick, not just its own
+        // destination's: Time Machine has one shared slot, and a tick that has
+        // declined to believe an idle sample must not act as though the slot
+        // is free on the strength of that same sample.
         var actuallyStarting: String?
-        if let destinationID = winnerID {
+        if let destinationID = winnerID, openRun?.awaitingCloseConfirmation != true {
             if let last = lastAttempt[destinationID] {
                 let wait = cooldown(
                     consecutiveFailures: Self.consecutiveFailures(for: destinationID, in: runs))
@@ -205,7 +223,14 @@ public actor SchedulerRunner {
         isWorking = true
         defer { isWorking = false }
 
-        guard let activity = try? await control.activity(), activity == .idle else { return }
+        // Same reasoning as evaluate()'s actuallyStarting gate (spec 015 §4):
+        // a run awaiting close confirmation might still be genuinely live
+        // despite the idle sample below, and starting here would overwrite
+        // openRun and strand it — the identical hazard the confirmation
+        // exists to prevent, reached through this entry point instead.
+        guard let activity = try? await control.activity(), activity == .idle,
+            openRun?.awaitingCloseConfirmation != true
+        else { return }
         await start(destinationID: destinationID, trigger: .manual)
     }
 
@@ -258,7 +283,9 @@ public actor SchedulerRunner {
         lastAttempt[destinationID] = now()
         let run = BackupRun(destinationID: destinationID, trigger: trigger, startedAt: now())
         try? history.append(run)
-        openRun = OpenRun(id: run.id, destinationID: destinationID, observedRunning: false)
+        openRun = OpenRun(
+            id: run.id, destinationID: destinationID, observedRunning: false,
+            observedStopping: false, awaitingCloseConfirmation: false)
 
         do {
             try await control.startBackup(destinationID: destinationID)
@@ -273,8 +300,9 @@ public actor SchedulerRunner {
     // MARK: - Closing out runs
 
     /// Reconciles open `.running` records against what is actually happening,
-    /// and reclaims the slot from one that is live but has stopped making
-    /// progress.
+    /// reclaims the slot from one that is live but has stopped making
+    /// progress, and adopts a live backup Escapement did not itself start
+    /// (spec 015).
     private func reconcileOpenRuns(activity: BackupActivity) async {
         let runs = (try? history.load()) ?? []
         let stillOpen = Set(runs.filter { $0.outcome == .running }.map(\.id))
@@ -283,10 +311,27 @@ public actor SchedulerRunner {
 
         for run in runs where run.outcome == .running {
             guard isLive(activity, forDestination: run.destinationID) else {
+                // An adopted run is not closed on a single non-live sample: a
+                // status blip closing it early has no way to be re-opened and
+                // would mint a duplicate record instead (spec 015 §4). The
+                // first such poll only arms the confirmation; the record
+                // stays `.running` through it.
+                if run.trigger == .external, run.id == openRun?.id,
+                    openRun?.awaitingCloseConfirmation == false
+                {
+                    openRun?.awaitingCloseConfirmation = true
+                    continue
+                }
                 closeFinished(run: run)
                 continue
             }
-            if run.id == openRun?.id { openRun?.observedRunning = true }
+            if run.id == openRun?.id {
+                openRun?.observedRunning = true
+                openRun?.awaitingCloseConfirmation = false
+                if isStopping(activity, forDestination: run.destinationID) {
+                    openRun?.observedStopping = true
+                }
+            }
 
             let snapshot = ProgressSnapshot(activity)
             if progressSnapshots[run.id] != snapshot {
@@ -295,10 +340,42 @@ public actor SchedulerRunner {
                 continue
             }
             let since = progressSince[run.id] ?? now()
-            if now().timeIntervalSince(since) >= stallTimeout {
+            // The watchdog never acts on a backup Escapement did not start —
+            // someone else asked for it, and may be watching it (spec 015
+            // §6). Progress is still tracked above so the bookkeeping stays
+            // uniform; only the reclaim itself is skipped.
+            if now().timeIntervalSince(since) >= stallTimeout, run.trigger != .external {
                 await stall(run: run)
+                // `stall` just issued `stopBackup()`, so `activity` — captured
+                // once at the top of this tick — no longer reflects reality:
+                // adopting on it would immediately re-mint the run this tick
+                // just stopped, reading its own pre-stop snapshot as a brand
+                // new external backup. The next tick's fresh read settles it.
+                return
             }
         }
+
+        adoptIfNeeded(activity: activity)
+    }
+
+    /// Adopts a live backup Escapement did not start as an ordinary history
+    /// record (spec 015 §1). Conditions 1 and 3 are checked first since they
+    /// are free; condition 2 re-reads history rather than trusting `runs`
+    /// above, which is a snapshot taken before this method's loop closed
+    /// whatever it closed — filtering that stale copy would refuse to adopt
+    /// on exactly the tick a run closes and an external one is already live.
+    private func adoptIfNeeded(activity: BackupActivity) {
+        guard case .running(let destinationID, _, _) = activity, let destinationID else { return }
+        guard openRun == nil else { return }
+        let stillRunning = ((try? history.load()) ?? []).contains { $0.outcome == .running }
+        guard !stillRunning else { return }
+
+        let run = BackupRun(destinationID: destinationID, trigger: .external, startedAt: now())
+        try? history.append(run)
+        openRun = OpenRun(
+            id: run.id, destinationID: destinationID, observedRunning: true,
+            observedStopping: false, awaitingCloseConfirmation: false)
+        lastAttempt[destinationID] = now()
     }
 
     /// Closes a `.running` record whose backup is no longer live.
@@ -306,7 +383,7 @@ public actor SchedulerRunner {
         if run.id == openRun?.id {
             let open = openRun!
             if open.observedRunning {
-                close(run: run, outcome: .completed)
+                close(run: run, outcome: open.observedStopping ? .cancelled : .completed)
             } else if now().timeIntervalSince(run.startedAt) < startupGrace {
                 // Give a just-started backup time to appear before judging it.
                 return
@@ -350,6 +427,11 @@ public actor SchedulerRunner {
             // cannot attribute it elsewhere, so we treat it as ours.
             return destinationID == nil || destinationID == id
         }
+    }
+
+    private func isStopping(_ activity: BackupActivity, forDestination id: String) -> Bool {
+        guard case .stopping(let destinationID) = activity else { return false }
+        return destinationID == nil || destinationID == id
     }
 
     // MARK: - Trigger classification

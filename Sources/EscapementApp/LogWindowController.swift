@@ -82,6 +82,7 @@ final class LogWindowController: NSWindowController, NSTableViewDataSource {
             case .scheduled: return "Scheduled"
             case .manual: return "Manual"
             case .missed: return "Catch-up"
+            case .external: return "External"
             }
         case "result":
             switch run.outcome {

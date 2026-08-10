@@ -175,4 +175,33 @@ struct HistoryStoreTests {
         let last = try store.lastCompletedRuns()
         #expect(last["A"] == nil)
     }
+
+    @Test("a run with the external trigger round-trips through disk")
+    func externalTriggerRoundTrips() throws {
+        let tmp = TempDir()
+        let store = HistoryStore(url: tmp.file("history.json"))
+        let external = BackupRun(
+            destinationID: "A", trigger: .external, startedAt: Date(timeIntervalSince1970: 100),
+            outcome: .completed)
+        try store.append(external)
+        #expect(try store.load() == [external])
+    }
+
+    @Test("a history file written before the external trigger existed still decodes")
+    func historyPredatingExternalTriggerDecodes() throws {
+        let tmp = TempDir()
+        try FileManager.default.createDirectory(at: tmp.url, withIntermediateDirectories: true)
+        let url = tmp.file("history.json")
+        // The shape a build without `.external` would have written: `trigger`
+        // and `outcome` only ever named `scheduled`/`manual`/`missed` and
+        // `running`/`completed`/`failed`/`cancelled`/`skipped`.
+        let json = """
+            [{"id":"11111111-1111-1111-1111-111111111111","destinationID":"A",\
+            "trigger":{"scheduled":{}},"startedAt":100,"outcome":{"completed":{}}}]
+            """
+        try Data(json.utf8).write(to: url)
+        let runs = try HistoryStore(url: url).load()
+        #expect(runs.count == 1)
+        #expect(runs[0].trigger == .scheduled)
+    }
 }

@@ -10,6 +10,9 @@ public struct BackupRun: Codable, Hashable, Sendable, Identifiable {
         case manual
         /// Started as catch-up for an occurrence the machine slept through.
         case missed
+        /// Observed running without Escapement having started it — System
+        /// Settings, another tool, or macOS's own scheduler.
+        case external
     }
 
     public enum Outcome: Codable, Hashable, Sendable {
