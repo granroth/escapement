@@ -24,7 +24,8 @@ public struct RecurrenceFormatter: Sendable {
             let padded = String(format: "%02d", minute)
             var summary = "\(every) at :\(padded)"
             if let window {
-                summary += " from \(formatted(window.start)) to \(formatted(window.end))"
+                let overnight = window.isOvernight ? "overnight " : ""
+                summary += " \(overnight)from \(formatted(window.start)) to \(formatted(window.end))"
             }
             return summary
 

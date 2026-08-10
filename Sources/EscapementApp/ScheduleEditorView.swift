@@ -274,13 +274,10 @@ final class ScheduleEditorView: NSView {
         switch frequencyPopUp.indexOfSelectedItem {
         case 0:
             let minute = hourlyMinutePopUp.indexOfSelectedItem * 5
-            let window =
+            let window: TimeWindow? =
                 windowCheckbox.state == .on
                 ? TimeWindow(start: time(from: windowStartPicker), end: time(from: windowEndPicker))
                 : nil
-            // An inverted window makes TimeWindow(...) nil; treat that as
-            // "no valid recurrence" so validation flags it.
-            if windowCheckbox.state == .on && window == nil { return nil }
             return .hourly(
                 everyHours: everyHoursPopUp.indexOfSelectedItem + 1, minute: minute, window: window)
         case 1:
@@ -337,12 +334,18 @@ final class ScheduleEditorView: NSView {
     private func updateValidation() {
         if currentRecurrence() == nil {
             switch frequencyPopUp.indexOfSelectedItem {
-            case 0:
-                validationLabel.stringValue = "The window’s start must be at or before its end."
             case 2:
                 validationLabel.stringValue = "Choose at least one weekday."
-            default:
+            case 3:
                 validationLabel.stringValue = "Choose at least one day of the month."
+            default:
+                // Hourly (0) and daily (1) have no invalid state left to
+                // report here: every pair of window pickers now constructs a
+                // valid `TimeWindow` (an inverted one simply means overnight),
+                // and daily's fields are always clamped to a valid range. If
+                // either ever regresses to producing nil, this reads as no
+                // message rather than a mismatched one from another case.
+                validationLabel.stringValue = ""
             }
         } else {
             validationLabel.stringValue = ""

@@ -120,6 +120,18 @@ struct CodingTests {
         }
     }
 
+    @Test("an out-of-range TimeOfDay inside a window is still rejected")
+    func timeOfDayInWindowRejected() {
+        // TimeWindow's own failable initialiser is gone as of spec 016 (any
+        // pair of TimeOfDay values is a well-formed window), so TimeOfDay's
+        // hand-written decoder is now the only remaining guard on a window's
+        // endpoints. This pins that the boundary still holds one level down.
+        #expect(throws: DecodingError.self) {
+            try decodeRecurrence(
+                #"{"kind":{"hourly":{"everyHours":4,"minute":0,"window":{"start":{"hour":99,"minute":0},"end":{"hour":4,"minute":0}}}},"times":[]}"#)
+        }
+    }
+
     @Test("an out-of-range TimeOfDay is rejected")
     func timeOfDayRejected() {
         #expect(throws: DecodingError.self) { try decodeTimeOfDay(#"{"hour":99,"minute":0}"#) }

@@ -318,4 +318,45 @@ struct DaylightSavingTests {
         #expect(comps.hour == 9)
         #expect(comps.minute == 0)
     }
+
+    /// `TimeWindow.contains` only ever sees a `TimeOfDay`, never a `Date`, so an
+    /// overnight window's membership test cannot itself be DST-sensitive — but
+    /// the *count* of fires on a transition night still depends on how many
+    /// wall-clock hours actually occurred, exactly as it does for an
+    /// unwindowed hourly schedule. These pin that the wrap adds no new
+    /// failure mode on top of the existing spring/fall behaviour above.
+    @Test("an overnight window loses exactly the skipped hour on spring-forward")
+    func overnightWindowSpringForward() {
+        let cal = la
+        let window = TimeWindow(start: TimeOfDay(hour: 23, minute: 0)!, end: TimeOfDay(hour: 4, minute: 0)!)
+        let r = Recurrence.hourly(everyHours: 1, minute: 0, window: window)!
+        var reference = date(2026, 3, 7, 22, 0, 0, cal)
+        var fires: [Date] = []
+        for _ in 0..<5 {
+            guard let next = r.nextFireDate(after: reference, calendar: cal) else { break }
+            fires.append(next)
+            reference = next
+        }
+        // 23:00, 00:00, 01:00, 03:00, 04:00 — five fires, not six, because
+        // 02:00 does not exist that night. No duplicates from the grid point
+        // that collapses onto 03:00.
+        #expect(fires.count == 5)
+        #expect(Set(fires).count == 5)
+        #expect(fires == fires.sorted())
+    }
+
+    @Test("an overnight window does not double-fire the repeated hour on fall-back")
+    func overnightWindowFallBack() {
+        let cal = la
+        let window = TimeWindow(start: TimeOfDay(hour: 23, minute: 0)!, end: TimeOfDay(hour: 4, minute: 0)!)
+        let r = Recurrence.hourly(everyHours: 1, minute: 0, window: window)!
+        let justBeforeOne = date(2026, 11, 1, 0, 59, 0, cal)
+        let fireAfterOne = r.nextFireDate(after: justBeforeOne, calendar: cal)!
+        let comps = cal.dateComponents([.hour], from: fireAfterOne)
+        #expect(comps.hour == 1)
+        let next = r.nextFireDate(after: fireAfterOne, calendar: cal)!
+        // The gap to the following fire is two real hours, not one, because
+        // wall-clock 01:00 occurred twice but only the first firing counts.
+        #expect(next.timeIntervalSince(fireAfterOne) == 2 * 60 * 60)
+    }
 }

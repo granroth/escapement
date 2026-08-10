@@ -1,20 +1,26 @@
 import Foundation
 
 /// A window of the day, inclusive of both ends, used to restrict which hourly
-/// firing points run. Overnight windows (end before start) are out of scope,
-/// so construction requires `start <= end`.
+/// firing points run. `start <= end` is a same-day window; `start > end`
+/// crosses midnight (e.g. 11:00 PM to 4:00 AM). Every pair of `TimeOfDay`
+/// values is well-formed, so construction cannot fail.
 public struct TimeWindow: Hashable, Sendable, Codable {
     public let start: TimeOfDay
     public let end: TimeOfDay
 
-    public init?(start: TimeOfDay, end: TimeOfDay) {
-        guard start <= end else { return nil }
+    public init(start: TimeOfDay, end: TimeOfDay) {
         self.start = start
         self.end = end
     }
 
+    /// Whether this window crosses midnight. Strictly `>`, never `>=`: equal
+    /// endpoints stay a same-day window selecting a single instant, matching
+    /// spec 006's deliberate choice to admit `start == end` rather than treat
+    /// it as "all day".
+    public var isOvernight: Bool { start > end }
+
     public func contains(_ time: TimeOfDay) -> Bool {
-        start <= time && time <= end
+        isOvernight ? (time >= start || time <= end) : (start <= time && time <= end)
     }
 }
 
@@ -54,10 +60,6 @@ public struct Recurrence: Codable, Hashable, Sendable {
     public static func hourly(everyHours: Int, minute: Int, window: TimeWindow? = nil) -> Recurrence?
     {
         guard (1...12).contains(everyHours), (0...59).contains(minute) else { return nil }
-        // Re-validate the window here too: a decoded `TimeWindow` bypasses its
-        // failable initialiser, so an inverted window can reach this factory
-        // and must be rejected rather than trusted.
-        if let window, window.start > window.end { return nil }
         return Recurrence(
             kind: .hourly(everyHours: everyHours, minute: minute, window: window), times: [])
     }
