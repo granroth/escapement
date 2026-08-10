@@ -1,6 +1,6 @@
 # Spec 012 — Scheduler fairness and stall recovery
 
-Status: proposed
+Status: implemented
 
 ## Problem
 
