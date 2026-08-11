@@ -32,8 +32,10 @@ public struct TimeWindow: Hashable, Sendable, Codable {
 public struct Recurrence: Codable, Hashable, Sendable {
 
     public enum Kind: Hashable, Sendable {
-        /// Every `everyHours` hours at `minute` past, anchored to midnight,
-        /// optionally restricted to a window of the day (`nil` means all day).
+        /// Every `everyHours` hours at `minute` past, optionally restricted to
+        /// a window of the day (`nil` means all day). Anchored to midnight
+        /// with no window; anchored to the window's start hour when there is
+        /// one, so the window's own start is on the grid. See spec 017.
         case hourly(everyHours: Int, minute: Int, window: TimeWindow?)
         /// Every `everyDays` days (1 = every day), counted from the schedule's
         /// anchor. See `nextFireDate(after:calendar:anchor:)`.
@@ -237,7 +239,16 @@ extension Recurrence {
             // scheduling agent must not have a crash one invariant slip away,
             // so the guard stays as a second line of defence.
             guard everyHours > 0 else { return [] }
-            return stride(from: 0, to: 24, by: everyHours).compactMap { hour -> Date? in
+            // A window's own start reads, to a user, as when the schedule
+            // begins — not as an offset into a midnight-anchored grid they
+            // never typed. So the grid's phase comes from the window's start
+            // hour when there is one; with no window this is `0 % everyHours
+            // == 0`, the same midnight anchor as always. See spec 017. Only
+            // the hour is used: the window's minute, like the recurrence's
+            // own `minute` below, keeps its independent meaning rather than
+            // being folded into the anchor.
+            let phase = (window?.start.hour ?? 0) % everyHours
+            return stride(from: phase, to: 24, by: everyHours).compactMap { hour -> Date? in
                 let time = TimeOfDay(hour: hour, minute: minute)!
                 guard window?.contains(time) ?? true else { return nil }
                 return instant(on: components, hour: hour, minute: minute, calendar: calendar)

@@ -111,6 +111,27 @@ struct HourlyWindowTests {
                 == date(2026, 3, 10, 16, 30))
     }
 
+    @Test("a same-day window not aligned to the interval anchors on its own start")
+    func windowStartNotAlignedToInterval() {
+        // Old (midnight-anchored) grid was 0,4,8,12,16,20 -> filtered to
+        // 9:00-17:00 gives 12:00, 16:00, never the window's own 9:00 open.
+        // Anchoring on the window start instead gives 9:00, 13:00, 17:00.
+        let window = TimeWindow(start: t(9), end: t(17))
+        let r = Recurrence.hourly(everyHours: 4, minute: 0, window: window)!
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 8, 0), calendar: cal)
+                == date(2026, 3, 10, 9, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 9, 0), calendar: cal)
+                == date(2026, 3, 10, 13, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 13, 0), calendar: cal)
+                == date(2026, 3, 10, 17, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 17, 0), calendar: cal)
+                == date(2026, 3, 11, 9, 0))
+    }
+
     @Test("start after end now constructs as an overnight window")
     func invertedConstructsOvernight() {
         let w = TimeWindow(start: t(18), end: t(8))
@@ -238,53 +259,157 @@ struct OvernightFiringPointTests {
         #expect(fires == fires.sorted())  // strictly increasing
     }
 
-    @Test("every 3 hours in an overnight window skips hours off the grid")
+    @Test("every 3 hours in an overnight window anchors on the window's own start")
     func gridFilterEvery3Hours() {
-        // 23 is not a multiple of 3, so the window never fires at 23:00 even
-        // though 23:00 is the window's own start.
+        // The grid's phase comes from the window's start hour (23 mod 3 = 2),
+        // so 23:00 is on the grid this time, three hours from the next
+        // candidate, 02:00.
         let r = overnight(everyHours: 3)
         #expect(
             r.nextFireDate(after: date(2026, 3, 10, 10, 0), calendar: cal)
-                == date(2026, 3, 11, 0, 0))
+                == date(2026, 3, 10, 23, 0))
         #expect(
-            r.nextFireDate(after: date(2026, 3, 11, 0, 0), calendar: cal)
-                == date(2026, 3, 11, 3, 0))
+            r.nextFireDate(after: date(2026, 3, 10, 23, 0), calendar: cal)
+                == date(2026, 3, 11, 2, 0))
+        // After the morning half ends, the loop does not skip a day early:
+        // this same day still has an evening candidate (23:00) left.
         #expect(
-            r.nextFireDate(after: date(2026, 3, 11, 3, 0), calendar: cal)
-                == date(2026, 3, 12, 0, 0))
+            r.nextFireDate(after: date(2026, 3, 11, 2, 0), calendar: cal)
+                == date(2026, 3, 11, 23, 0))
     }
 
-    @Test("every 2 hours at :00 in an overnight window has no evening candidate")
+    @Test("every 2 hours at :00 in an overnight window fires at 23:00, 01:00, and 03:00")
     func gridFilterEvery2Hours() {
-        // The grid is 0,2,4,...,22 — 23 is never on it, so this window's
-        // nightly candidates are morning-only: 00:00, 02:00, 04:00.
+        // The grid's phase comes from the window's start hour (23 mod 2 = 1),
+        // so the grid is the odd hours: 01:00, 03:00, ..., 23:00, of which
+        // 01:00, 03:00, and 23:00 fall in the window.
         let r = overnight(everyHours: 2)
         #expect(
             r.nextFireDate(after: date(2026, 3, 10, 10, 0), calendar: cal)
-                == date(2026, 3, 11, 0, 0))
+                == date(2026, 3, 10, 23, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 23, 0), calendar: cal)
+                == date(2026, 3, 11, 1, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 11, 1, 0), calendar: cal)
+                == date(2026, 3, 11, 3, 0))
+        // After the morning half ends, the loop does not skip a day early.
         #expect(
             r.nextFireDate(after: date(2026, 3, 11, 4, 0), calendar: cal)
-                == date(2026, 3, 12, 0, 0))
+                == date(2026, 3, 11, 23, 0))
     }
 
-    @Test("every 4 hours at :00 in an overnight window fires at 00:00 and 04:00 only")
+    @Test("chaining every 4 hours through several nights produces no duplicates or gaps")
+    func chainsCleanlyReanchored() {
+        // The reported case, chained the same way `chainsCleanly` pins it for
+        // everyHours: 1 — but that test's phase is always 0 regardless of the
+        // window (23 % 1 == 0), so it never actually exercises re-anchoring.
+        // This does: phase = 23 % 4 = 3.
+        let r = overnight(everyHours: 4)
+        var reference = date(2026, 3, 10, 12, 0)
+        var fires: [Date] = []
+        for _ in 0..<8 {
+            guard let next = r.nextFireDate(after: reference, calendar: cal) else { break }
+            fires.append(next)
+            reference = next
+        }
+        #expect(fires.count == 8)
+        #expect(Set(fires).count == 8)  // no duplicates
+        #expect(fires == fires.sorted())  // strictly increasing
+        // Every fire is 23:00 or 03:00 — never a multiple-of-4 hour that
+        // isn't in the window.
+        for fire in fires {
+            let c = cal.dateComponents([.hour, .minute], from: fire)
+            #expect((c.hour, c.minute) == (23, 0) || (c.hour, c.minute) == (3, 0))
+        }
+    }
+
+    @Test("a window starting at midnight anchors the same as no window")
+    func windowStartAtMidnight() {
+        // window.start.hour == 0 gives phase 0, identical to the unwindowed
+        // grid — this is the boundary the fallback `window?.start.hour ?? 0`
+        // shares with the no-window case. The window spans the whole day
+        // (00:00-23:59) so `contains` never filters anything out, isolating
+        // the phase comparison from the unrelated filtering behavior.
+        let r = Recurrence.hourly(
+            everyHours: 4, minute: 30, window: TimeWindow(start: t(0), end: t(23, 59)))!
+        let unwindowed = Recurrence.hourly(everyHours: 4, minute: 30)!
+        for reference in [
+            date(2026, 3, 10, 1, 0), date(2026, 3, 10, 5, 0), date(2026, 3, 10, 13, 0),
+            date(2026, 3, 10, 21, 0),
+        ] {
+            #expect(
+                r.nextFireDate(after: reference, calendar: cal)
+                    == unwindowed.nextFireDate(after: reference, calendar: cal))
+        }
+    }
+
+    @Test("an interval that doesn't divide 24 evenly alternates gaps rather than holding a fixed cadence")
+    func nonDivisorIntervalAlternatesGaps() {
+        // everyHours: 5 doesn't divide 24, so the per-day-reset grid was
+        // already uneven before this change (spec 001 rule 2's "the day
+        // boundary always wins"). Re-anchoring to the window's start (phase
+        // 23 % 5 = 3) keeps that unevenness rather than smoothing it into a
+        // uniform 5-hour cadence: the window candidates are 03:00 and 23:00,
+        // 4 hours apart one way and 20 the other — not 5.
+        let r = overnight(everyHours: 5)
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 10, 0), calendar: cal)
+                == date(2026, 3, 10, 23, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 23, 0), calendar: cal)
+                == date(2026, 3, 11, 3, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 11, 3, 0), calendar: cal)
+                == date(2026, 3, 11, 23, 0))
+    }
+
+    @Test("every 4 hours at :00 in an overnight window fires at 23:00 and 03:00 only")
     func gridFilterEvery4Hours() {
+        // The reported case: 23 mod 4 = 3, so the grid is 03:00, 07:00,
+        // 11:00, 15:00, 19:00, 23:00 — only 03:00 and 23:00 fall in the
+        // window.
         let r = overnight(everyHours: 4)
         #expect(
             r.nextFireDate(after: date(2026, 3, 10, 10, 0), calendar: cal)
-                == date(2026, 3, 11, 0, 0))
+                == date(2026, 3, 10, 23, 0))
         #expect(
-            r.nextFireDate(after: date(2026, 3, 11, 0, 0), calendar: cal)
-                == date(2026, 3, 11, 4, 0))
+            r.nextFireDate(after: date(2026, 3, 10, 23, 0), calendar: cal)
+                == date(2026, 3, 11, 3, 0))
+        // After 03:00 the current day still has 23:00 left; the loop must
+        // not skip ahead to the next day's 03:00.
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 11, 3, 0), calendar: cal)
+                == date(2026, 3, 11, 23, 0))
     }
 
     @Test("the window end is a time, not an hour: :30 stops before the next :30 past it")
     func endIsATimeNotAnHour() {
+        // 23 mod 2 = 1, so the grid is the odd hours at :30: 01:30, 03:30,
+        // ..., 23:30. 05:30 is on the grid but past the window's 04:00 end,
+        // so the next candidate after 03:30 is the evening's 23:30, not a
+        // same-morning 05:30.
         let r = Recurrence.hourly(
             everyHours: 2, minute: 30, window: TimeWindow(start: t(23), end: t(4)))!
         #expect(
-            r.nextFireDate(after: date(2026, 3, 11, 2, 30), calendar: cal)
-                == date(2026, 3, 12, 0, 30))
+            r.nextFireDate(after: date(2026, 3, 11, 3, 30), calendar: cal)
+                == date(2026, 3, 11, 23, 30))
+    }
+
+    @Test("the window start's minute is ignored when anchoring the grid")
+    func windowStartMinuteIgnoredForAnchor() {
+        // The anchor uses only the start's hour (23), so the grid is the
+        // same 03:00/07:00/.../23:00 as a window starting exactly 23:00 —
+        // but the window itself opens at 23:15, so 23:00 fails `contains`
+        // and does not fire. Only 03:00 survives each night.
+        let r = Recurrence.hourly(
+            everyHours: 4, minute: 0, window: TimeWindow(start: t(23, 15), end: t(4)))!
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 2, 0), calendar: cal)
+                == date(2026, 3, 10, 3, 0))
+        #expect(
+            r.nextFireDate(after: date(2026, 3, 10, 3, 0), calendar: cal)
+                == date(2026, 3, 11, 3, 0))
     }
 }
 
