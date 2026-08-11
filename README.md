@@ -81,13 +81,10 @@ and the app itself is the window where destinations are configured. Turning
 background backups on or off, hiding the menu bar icon, and failure
 notifications all live in Settings.
 
-Known limitations: a backup stopped by hand is recorded as completed rather
-than cancelled, because the outcome is inferred from `tmutil status` rather
-than reported; there is no per-destination detailed log window yet; the
-schedule editor sets a single time of day, though the engine supports several;
-and an hourly window cannot cross midnight. The conflict banner shown when
-macOS's own scheduler is on is a warning, not a guard — it does not disable
-editing or stop the agent.
+Known limitations: there is no per-destination detailed log window yet, and
+the schedule editor sets a single time of day, though the engine supports
+several. The conflict banner shown when macOS's own scheduler is on is a
+warning, not a guard — it does not disable editing or stop the agent.
 
 See `docs/ARCHITECTURE.md` for the design and the platform research behind it,
 and `docs/specs/` for feature-by-feature specifications.

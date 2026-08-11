@@ -90,9 +90,12 @@ clock and leaves the disk alone.
 | Monthly | Days of the month and a time | Monthly on the 1st and 15th at 3:00 AM |
 {% end %}
 
-The hourly window is optional and cannot cross midnight. "Every N days" counts
-from the day you saved the schedule: set every 2 days on a Monday and it runs
-Monday, Wednesday, Friday.
+The hourly window is optional and can cross midnight — 11:00 PM to 4:00 AM
+runs through the night. The interval counts from the window's start rather
+than from midnight, so "every 4 hours from 11:00 PM to 4:00 AM" fires at
+11:00 PM and 3:00 AM; with no window set, the interval still counts from
+midnight. "Every N days" counts from the day you saved the schedule: set
+every 2 days on a Monday and it runs Monday, Wednesday, Friday.
 
 Times use your Mac's calendar, time zone, and locale.
 
@@ -232,10 +235,6 @@ Extensions.
 
 **The menu bar icon is gone.** Either it's hidden or background backups were
 turned off. Both are in Settings.
-
-**A backup I stopped shows as completed.** A known limitation: Escapement infers
-the outcome from Time Machine's reported status, and a backup you stop by hand
-looks the same from outside as one that finished.
 
 ## Building from source
 

@@ -91,14 +91,10 @@ case.
 
 ## What can't it do yet?
 
-- A backup you stop by hand is recorded as completed rather than cancelled. The
-  outcome is inferred from Time Machine's status, and from outside the two look
-  alike.
 - There's no per-destination log window. History is recorded and the last run is
   shown, but there's no viewer for it.
 - The editor sets one time of day per destination, though the engine supports
   several.
-- Hourly windows can't cross midnight.
 
 ## What does it cost, and where's the source?
 
