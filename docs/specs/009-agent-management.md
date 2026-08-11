@@ -1,6 +1,6 @@
 # Spec 009 — Managing the background agent
 
-Status: draft
+Status: implemented; start-at-login unverified (see below)
 
 ## Purpose
 
@@ -210,16 +210,26 @@ first one.
 Still unproven: start **at login** specifically. The spike registered the agent
 mid-session, which puts launchd in the same `gui/$UID` domain by the same
 mechanism `RunAtLoad` uses, so the risk is low — but it has not been observed
-through an actual logout/login cycle, and should be before this ships.
+through an actual logout/login cycle. Everything else in this spec has shipped
+and been verified; this one observation remains outstanding rather than
+resolved, which is why the status line above says so rather than claiming a
+clean "implemented."
 
 ## Interaction with the known `SMAppService` limitation
 
 Spec 007 recorded that rebuilding the app while the agent is registered blocks
 the new build (code-signing hash mismatch). That gets more visible once the
 agent has a face: a stale agent would sit in the menu bar showing stale state
-from the old binary. This milestone should therefore also take the backlog item
-007 deferred — re-register the agent on GUI launch when it is already enabled —
-so an updated app reconciles itself instead of leaving a zombie in the menu bar.
+from the old binary. This milestone therefore also takes the backlog item 007
+deferred — reconciling a stale agent on GUI launch — but not in the literal
+shape first proposed here. "Re-register whenever the GUI launches and the
+agent is already enabled" turned out to be the wrong rule: `register()` on an
+already-**running**, healthy agent re-submits the job, which kills it without
+re-triggering `RunAtLoad` (found on hardware, recorded in `CLAUDE.md`). The
+shipped version, `AppController.reregisterAgentIfStale()`, re-registers only
+when the service reports `.enabled` but no live process backs it — the actual
+"stale agent from an old binary" case this section exists to fix — and leaves
+a healthy running agent alone.
 
 ## Out of scope
 
