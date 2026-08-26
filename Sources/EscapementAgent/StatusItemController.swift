@@ -45,9 +45,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Shows or hides the item to match the user's preference. Hiding removes
     /// the item entirely, so the agent keeps running silently.
+    ///
+    /// Showing always re-asserts `isVisible`, not just on first install.
+    /// `NSStatusItem`'s visibility is persisted by the system under its
+    /// `autosaveName`, independent of whether the item object still exists —
+    /// macOS's own Menu Bar settings can flip that persisted bit to hidden
+    /// (that is how the user-facing "show in menu bar" toggle there works),
+    /// and it stays hidden across relaunches until something explicitly sets
+    /// it back to `true`. Without this, `install()`'s
+    /// already-installed guard would skip re-showing a system-hidden item for
+    /// the rest of the process's life, and a brand new item created after
+    /// relaunch would just inherit the same persisted-hidden state. Settings
+    /// stays the one owner: this makes it authoritative again instead of a
+    /// one-time default.
     func setVisible(_ visible: Bool) {
         if visible {
             install()
+            statusItem?.isVisible = true
         } else {
             if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
             statusItem = nil
@@ -57,12 +71,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func install() {
         guard statusItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // Deliberately NOT `.removalAllowed`. A ⌘-drag removal only sets
-        // `isVisible = false` without telling us, so the item would stay
-        // non-nil, `install()`'s guard would skip rebuilding it, and the icon
-        // would be gone for the life of the process while Settings still
-        // claimed it was shown. The agent also cannot write the preference back
-        // — `configuration.json` is the GUI's file. One owner: Settings.
+        // A stable name rather than the default "automatically chosen" one,
+        // so the persisted visibility bit above is keyed on an identity we
+        // control and can reason about, not an implementation detail of
+        // AppKit's auto-naming.
+        item.autosaveName = "MainStatusItem"
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
