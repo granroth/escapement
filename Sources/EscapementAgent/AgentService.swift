@@ -39,6 +39,9 @@ final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterD
     /// Cadence while a backup runs, to observe completion and close out history.
     private let activePoll: TimeInterval = 5
 
+    /// Serialises evaluations. See `TickCoalescer` for why this matters.
+    private let ticks = TickCoalescer()
+
     override init() {
         runner = SchedulerRunner(
             control: control,
@@ -69,7 +72,19 @@ final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterD
 
     // MARK: - The tick
 
+    /// Runs one evaluation, coalescing everything asked for while it runs into
+    /// a single follow-up.
+    ///
+    /// The guard is not an optimisation. The support-directory watcher starts a
+    /// tick on every file-system event and the agent writes `history.json` and
+    /// `state.json` into that same directory, so it triggers itself; without
+    /// coalescing, one slow `tmutil` call becomes as many concurrent stalled
+    /// ticks as the watcher can fire.
     private func tick() async {
+        await ticks.run { await self.runTick() }
+    }
+
+    private func runTick() async {
         await processCommands()
         await runner.evaluate()
         await notifyOfNewFailures()
@@ -361,7 +376,16 @@ final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterD
     // MARK: - Timer
 
     private func rescheduleTimer() async {
-        let activity = (try? await control.activity()) ?? .idle
+        // Logged rather than swallowed: a `tmutil` that stops answering is the
+        // one fault that silently stops the agent scheduling anything, and it
+        // is otherwise invisible from outside the process.
+        let activity: BackupActivity
+        do {
+            activity = try await control.activity()
+        } catch {
+            log.error("tmutil status failed: \(String(describing: error), privacy: .public)")
+            activity = .idle
+        }
         let interval: TimeInterval
         if activity == .idle {
             let next = await runner.nextWakeUp()

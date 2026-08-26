@@ -90,6 +90,84 @@ struct SchedulerRunnerTests {
         #expect(runs[0].outcome == .running)
     }
 
+    @Test("a failure to launch the tool closes the run immediately")
+    func launchFailureClosesRun() async throws {
+        // Nothing reached backupd, so there is nothing to wait for.
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setStartFailure(TMUtilController.ToolError.launchFailed(underlying: "nope"))
+
+        await h.runner.evaluate()
+
+        let runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].outcome == .failed(reason: "could not run tmutil: nope"))
+    }
+
+    @Test("a tmutil that stops answering leaves the run open to be confirmed")
+    func timeoutLeavesRunOpen() async throws {
+        // `startbackup` timing out says nothing about whether backupd took the
+        // work. Closing the run as failed here would both lie and strand the
+        // real backup, which would then be re-adopted as a second, external
+        // record for the same physical run.
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setStartFailure(
+            TMUtilController.ToolError.timedOut(arguments: ["startbackup"]))
+
+        await h.runner.evaluate()
+
+        let afterStart = try h.history.load()
+        #expect(afterStart.count == 1)
+        #expect(afterStart[0].outcome == .running)
+
+        // The backup was in fact running all along; the next tick sees it.
+        await h.fake.setStartFailure(nil)
+        await h.fake.setActivity(
+            .running(
+                destinationID: "A", phase: .copying,
+                progress: BackupProgress(fractionCompleted: 0.5)))
+        h.clock.advance(by: 60)
+        await h.runner.evaluate()
+
+        // Still one record, and it is the original scheduled one — not a second
+        // adopted as external.
+        let running = try h.history.load()
+        #expect(running.count == 1)
+        #expect(running[0].id == afterStart[0].id)
+        #expect(running[0].trigger == .scheduled)
+
+        await h.fake.setActivity(.idle)
+        h.clock.advance(by: 60)
+        await h.runner.evaluate()
+
+        let done = try h.history.load()
+        #expect(done.count == 1)
+        #expect(done[0].outcome == .completed)
+    }
+
+    @Test("a backup that never appears after a timeout is closed honestly")
+    func timeoutWithNoBackupClosesAsDidNotStart() async throws {
+        let h = Harness(now: date(2026, 3, 10, 3, 1))
+        defer { h.cleanup() }
+        try h.setDaily("A", at: 3, from: date(2026, 3, 9, 12, 0))
+        await h.fake.setStartFailure(
+            TMUtilController.ToolError.timedOut(arguments: ["startbackup"]))
+
+        await h.runner.evaluate()
+        await h.fake.setStartFailure(nil)
+
+        // Past the startup grace with nothing ever showing up in tmutil status.
+        h.clock.advance(by: 60 * 10)
+        await h.runner.evaluate()
+
+        let runs = try h.history.load()
+        #expect(runs.count == 1)
+        #expect(runs[0].outcome == .failed(reason: "backup did not start"))
+    }
+
     @Test("does not start when a backup is already running")
     func noStartWhenBusy() async throws {
         let h = Harness(now: date(2026, 3, 10, 12, 0))

@@ -289,6 +289,15 @@ public actor SchedulerRunner {
 
         do {
             try await control.startBackup(destinationID: destinationID)
+        } catch let error as any PossiblyDispatchedError where error.mayHaveDispatched {
+            // The tool stopped answering, but `backupd` may already have the
+            // work — and killing `tmutil` does not recall a request it already
+            // accepted. Leave the run open and let the ordinary observation
+            // path settle it: `closeFinished` gives it `startupGrace` to appear
+            // in `tmutil status`, then closes it as "backup did not start" only
+            // if it genuinely never did. Recording a failure here instead would
+            // both lie about a backup that is running and strand it, to be
+            // re-adopted afterwards as a second, external-looking record.
         } catch {
             // A failure to launch the tool is final: close the run now rather
             // than leave it waiting for a backup that will never appear.
