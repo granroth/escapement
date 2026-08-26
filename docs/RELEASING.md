@@ -3,8 +3,8 @@
 Push a tag, get a notarized universal `.dmg` on a draft GitHub release.
 
 ```sh
-git tag v0.7.0
-git push origin v0.7.0
+git tag v0.8.0
+git push origin v0.8.0
 ```
 
 The workflow refuses any tag that is not `vMAJOR.MINOR.PATCH`. The version is
@@ -86,7 +86,7 @@ The Issuer ID is shown above the key list; the Key ID is in the row itself.
 ```sh
 scripts/build-app.sh release                     # native arch, your Developer ID
 ESCAPEMENT_UNIVERSAL=1 scripts/build-app.sh release
-scripts/make-dmg.sh 0.7.0
+scripts/make-dmg.sh 0.8.0
 ```
 
 `ESCAPEMENT_SIGN_IDENTITY` overrides the signing identity, and `-` forces

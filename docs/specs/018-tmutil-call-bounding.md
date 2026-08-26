@@ -1,6 +1,6 @@
 # 018 — Bounding `tmutil` calls
 
-Status: Implemented
+Status: implemented
 
 ## The failure this fixes
 
