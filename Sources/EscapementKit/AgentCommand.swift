@@ -19,6 +19,19 @@ public enum AgentCommand: Codable, Hashable, Sendable {
     /// interval and when the last check happened — the Settings "Check Now"
     /// button.
     case checkForUpdatesNow
+    /// Assert the menu bar item's visibility because the user just asked for
+    /// it, by ticking the Settings checkbox.
+    ///
+    /// A command rather than a configuration edit for the same reason `pause`
+    /// is one: `showsMenuBarIcon` is the user's stored preference, while the
+    /// item's live visibility belongs to the agent, which owns the item.
+    ///
+    /// This does not overrule macOS. An item the system is suppressing through
+    /// its own Menu Bar settings stays suppressed no matter what the agent
+    /// sets, which is why nothing re-asserts visibility on a timer and why the
+    /// GUI explains that case instead. See
+    /// `docs/specs/019-menu-bar-visibility-sync.md`.
+    case showMenuBarIcon
 }
 
 /// Reads and writes the pending manual command.

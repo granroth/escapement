@@ -26,6 +26,15 @@ final class SettingsWindowController: NSWindowController {
     private let statusLabel = NSTextField(labelWithString: "")
     private let toggleButton = NSButton(title: "", target: nil, action: nil)
     private let approvalButton = NSButton(title: "Open Login Items", target: nil, action: nil)
+    /// Shown only while macOS is suppressing the icon, so a ticked checkbox
+    /// with nothing beside it in the menu bar is explained rather than left
+    /// looking like Escapement's own bug.
+    private let menuBarBlockedLabel = NSTextField(wrappingLabelWithString: "")
+    private let menuBarSettingsButton = NSButton(
+        title: "Open Menu Bar Settings", target: nil, action: nil)
+    /// What the window is currently sized and laid out for, so the explanation
+    /// is shown or hidden only on a real change.
+    private var isShowingMenuBarBlocked = false
     private let menuBarCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let notifyCheckbox = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let updateIntervalPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -87,6 +96,28 @@ final class SettingsWindowController: NSWindowController {
         menuBarCheckbox.target = self
         menuBarCheckbox.action = #selector(toggleMenuBarIcon)
 
+        menuBarBlockedLabel.stringValue =
+            "macOS is hiding this icon. Allow Escapement under Menu Bar in System Settings to "
+            + "bring it back."
+        menuBarBlockedLabel.font = .systemFont(ofSize: 11)
+        menuBarBlockedLabel.textColor = .secondaryLabelColor
+        // Wrap within the width the separators already establish. Without this
+        // the label is the widest thing in the stack, so the window would grow
+        // wider the moment macOS suppresses the icon and narrow again when it
+        // stops — the window changing shape as well as height.
+        menuBarBlockedLabel.preferredMaxLayoutWidth = 420
+        menuBarBlockedLabel.setContentCompressionResistancePriority(
+            .defaultLow, for: .horizontal)
+        menuBarSettingsButton.bezelStyle = .rounded
+        menuBarSettingsButton.controlSize = .small
+        menuBarSettingsButton.target = self
+        menuBarSettingsButton.action = #selector(openMenuBarSettings)
+        // Hidden before the window is measured below. They appear only when
+        // macOS is suppressing the icon, which is the rare case; sizing the
+        // window around them would leave dead space in the common one.
+        menuBarBlockedLabel.isHidden = true
+        menuBarSettingsButton.isHidden = true
+
         notifyCheckbox.title = "Notify me when a backup fails"
         notifyCheckbox.target = self
         notifyCheckbox.action = #selector(toggleNotifications)
@@ -130,7 +161,7 @@ final class SettingsWindowController: NSWindowController {
         let stack = NSStackView(views: [
             heading, statusLabel, buttons,
             separator(),
-            menuBarCheckbox, notifyCheckbox,
+            menuBarCheckbox, menuBarBlockedLabel, menuBarSettingsButton, notifyCheckbox,
             separator(),
             updateHeading, updateControls, updateStatusRow,
         ])
@@ -139,6 +170,8 @@ final class SettingsWindowController: NSWindowController {
         stack.spacing = 12
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.setCustomSpacing(6, after: heading)
+        stack.setCustomSpacing(4, after: menuBarCheckbox)
+        stack.setCustomSpacing(12, after: menuBarSettingsButton)
         stack.setCustomSpacing(18, after: buttons)
         stack.setCustomSpacing(6, after: updateHeading)
 
@@ -199,6 +232,30 @@ final class SettingsWindowController: NSWindowController {
         }
 
         menuBarCheckbox.state = controller.configuration.showsMenuBarIcon ? .on : .off
+        // Only worth saying while the user is asking for an icon they are not
+        // getting. With the box unticked there is nothing to explain.
+        //
+        // The agent must also be alive. It is the only writer of this verdict,
+        // so a stopped agent leaves whatever it last concluded frozen in the
+        // state file with nothing able to correct it — and while it is stopped
+        // the icon is missing because the user stopped it, not because macOS
+        // intervened. Saying otherwise sends them to System Settings to fix
+        // something that is not broken.
+        let agentRunning = controller.isAgentEnabled && !controller.isAgentStale
+        let blocked =
+            controller.configuration.showsMenuBarIcon
+            && agentRunning
+            && controller.agentState.menuBarIconSuppressed == true
+        // Only resize when the state actually changes: `refresh()` runs on every
+        // notification, and setting the size each time would fight the window.
+        if blocked != isShowingMenuBarBlocked {
+            isShowingMenuBarBlocked = blocked
+            menuBarBlockedLabel.isHidden = !blocked
+            menuBarSettingsButton.isHidden = !blocked
+            if let window, let content = window.contentView {
+                window.setContentSize(content.fittingSize)
+            }
+        }
         notifyCheckbox.state = controller.configuration.notifiesOnFailure ? .on : .off
 
         if let index = intervalOptions.firstIndex(where: {
@@ -248,6 +305,10 @@ final class SettingsWindowController: NSWindowController {
                         + "folder to run in the background.")
             }
         }
+    }
+
+    @objc private func openMenuBarSettings() {
+        controller.openMenuBarSettings()
     }
 
     @objc private func openLoginItems() {

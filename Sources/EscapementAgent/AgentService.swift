@@ -16,6 +16,22 @@ final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterD
     private let historyStore = HistoryStore()
     private let commandStore = CommandStore()
     private let stateStore = StateStore()
+    private var menuBarSuppression = MenuBarSuppression()
+    /// When the item was last rebuilt to test whether macOS has started
+    /// permitting it again. `nil` until the first attempt.
+    private var lastMenuBarRebuild: Date?
+    /// How long to leave between rebuild attempts. Long enough that a fresh
+    /// item can settle and be judged — a rebuild resets the reading to
+    /// `settling`, and confirming suppression again needs two more after it —
+    /// and short enough that restoring the permission brings the icon back on
+    /// its own within a few minutes.
+    private let menuBarRebuildInterval: TimeInterval = 180
+    /// What is already in `state.json`, so an unchanged verdict is not
+    /// rewritten on every tick. Seeded from the file at startup rather than
+    /// left nil: the previous run's conclusion is still the published one, and
+    /// a fresh process should not rewrite it just because it has forgotten.
+    private lazy var lastPublishedMenuBarSuppression: Bool? =
+        (try? stateStore.load())?.menuBarIconSuppressed
     private let runner: SchedulerRunner
     private let log = Logger(subsystem: "com.granroth.Escapement", category: "agent")
     private let summaryBuilder = StatusSummaryBuilder(calendar: .current, locale: .current)
@@ -162,6 +178,9 @@ final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterD
             case .resume:
                 log.log("resume requested")
                 await runner.resume()
+            case .showMenuBarIcon:
+                log.log("menu bar icon requested")
+                statusItem.assertVisible()
             case .checkForUpdatesNow:
                 log.log("update check requested")
                 // Spawned, not awaited, like the due-check below: this command
@@ -170,6 +189,45 @@ final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterD
                 Task { await self.performUpdateCheck() }
             }
         }
+    }
+
+    /// Watches for macOS suppressing the menu bar item and publishes the
+    /// verdict for the GUI, so a ticked "Show Escapement in the menu bar" box
+    /// with no icon beside it can be explained rather than left a mystery.
+    ///
+    /// Written only when the verdict changes. `state.json` is read by the GUI
+    /// on every change notification, and a tick that rewrites it unchanged
+    /// would wake that up as often as once every five seconds for nothing.
+    private func observeMenuBarSuppression(wanted: Bool) {
+        // Only meaningful when the icon is supposed to be showing. With the
+        // preference off there is no item, and its absence is the user's doing.
+        menuBarSuppression.observe(wanted ? statusItem.placement : .absent)
+
+        // While the item is believed suppressed, rebuild it periodically. That
+        // is the only way to find out whether the user has allowed Escapement
+        // again, because the permission is read when the item is created and
+        // never revisited for an existing one.
+        if wanted, menuBarSuppression.verdict == true {
+            let now = Date()
+            if now.timeIntervalSince(lastMenuBarRebuild ?? .distantPast)
+                >= menuBarRebuildInterval
+            {
+                lastMenuBarRebuild = now
+                log.log("rebuilding the menu bar item to retest the system's permission")
+                statusItem.reinstall()
+            }
+        } else {
+            lastMenuBarRebuild = nil
+        }
+
+        // An unknown verdict publishes nothing, so whatever the previous run
+        // concluded stands until this one has grounds to disagree.
+        guard let verdict = menuBarSuppression.verdict,
+            verdict != lastPublishedMenuBarSuppression
+        else { return }
+        lastPublishedMenuBarSuppression = verdict
+        log.log("menu bar icon suppressed by the system: \(verdict, privacy: .public)")
+        try? stateStore.mutate { $0.setMenuBarIconSuppressed(verdict) }
     }
 
     // MARK: - Update check
@@ -281,6 +339,7 @@ final class AgentService: NSObject, StatusItemActions, UNUserNotificationCenterD
     private func refreshStatusItem() async {
         let configuration = (try? configurationStore.load()) ?? Configuration()
         statusItem.setVisible(configuration.showsMenuBarIcon)
+        observeMenuBarSuppression(wanted: configuration.showsMenuBarIcon)
         guard configuration.showsMenuBarIcon else { return }
 
         let destinations = (try? await control.destinations()) ?? []

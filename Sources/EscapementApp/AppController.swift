@@ -173,9 +173,17 @@ final class AppController {
         return true
     }
 
+    /// Turning the icon *on* is sent as a command as well as stored as a
+    /// preference. The agent no longer forces visibility on every tick, so the
+    /// stored preference alone cannot overrule a hide that came from macOS's
+    /// own Menu Bar settings; the command is the user's act, and the act is
+    /// what overrules it. Turning it off needs no command — the agent removes
+    /// the item outright to match the preference.
     @discardableResult
     func setShowsMenuBarIcon(_ shows: Bool) -> Bool {
-        updateConfiguration { $0.showsMenuBarIcon = shows }
+        let stored = updateConfiguration { $0.showsMenuBarIcon = shows }
+        if stored, shows { try? commandStore.post(.showMenuBarIcon) }
+        return stored
     }
 
     @discardableResult
@@ -268,6 +276,18 @@ final class AppController {
 
     func openLoginItemsSettings() {
         agent.openLoginItemsSettings()
+    }
+
+    /// The Menu Bar pane, where macOS's own "Allow in the Menu Bar" list can
+    /// put Escapement's icon back. Escapement never changes that setting
+    /// itself — it is the system's to hold — so the most it does is take the
+    /// user to it.
+    func openMenuBarSettings() {
+        if let url = URL(
+            string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension")
+        {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func openTimeMachineSettings() {

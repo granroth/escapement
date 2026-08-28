@@ -19,6 +19,20 @@ struct AgentCommandCodingTests {
     func stop() throws {
         #expect(try roundTrip(.stop) == .stop)
     }
+
+    @Test("showMenuBarIcon round-trips")
+    func showMenuBarIcon() throws {
+        #expect(try roundTrip(.showMenuBarIcon) == .showMenuBarIcon)
+    }
+
+    /// A command file written by an older GUI must still decode against the
+    /// widened enum, since the agent drains whatever is waiting after an
+    /// upgrade rather than discarding it.
+    @Test("a command from before the case existed still decodes")
+    func olderCommandStillDecodes() throws {
+        let data = Data(#"{"stop":{}}"#.utf8)
+        #expect(try JSONDecoder().decode(AgentCommand.self, from: data) == .stop)
+    }
 }
 
 @Suite("CommandStore")

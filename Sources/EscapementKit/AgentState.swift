@@ -52,6 +52,15 @@ public struct AgentState: Codable, Hashable, Sendable {
     /// a failed one, so a transient network outage can't erase a real result.
     public private(set) var availableUpdate: AvailableUpdate?
 
+    /// Whether macOS is suppressing the menu bar item, so the GUI can explain
+    /// a ticked "Show Escapement in the menu bar" box with no icon beside it.
+    ///
+    /// Optional rather than defaulting to `false` so a `state.json` written by
+    /// an agent that predates the field still decodes: a missing key would
+    /// otherwise throw and discard every other value in the file, including the
+    /// pause. `nil` means no agent has reported either way.
+    public private(set) var menuBarIconSuppressed: Bool?
+
     public init(pausedUntil: Date? = nil, waiting: Waiting? = nil) {
         self.pausedUntil = pausedUntil
         self.waiting = waiting
@@ -82,6 +91,10 @@ public struct AgentState: Codable, Hashable, Sendable {
 
     public mutating func resume() {
         pausedUntil = nil
+    }
+
+    public mutating func setMenuBarIconSuppressed(_ suppressed: Bool) {
+        menuBarIconSuppressed = suppressed
     }
 
     public mutating func setWaiting(_ waiting: Waiting?) {
